@@ -1,0 +1,15 @@
+project:
+  type: default
+
+format:
+  html:
+    code-fold: true       # adds fold buttons
+    code-tools: true      # global "Show/Hide code" toolbar
+    toc: true
+    embed-resources: true # make a single self-contained HTML
+execute:
+  echo: true              # show code by default (users can fold)
+  # eval: false           # uncomment to avoid re-executing on render
+
+# example run:
+# quarto render notebooks/vis.ipynb --to html

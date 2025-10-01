@@ -1,0 +1,78 @@
+# Paths
+paths:
+  data_dir: /projects/wangc/m344313/OVTMA_project/data/OVTMA_fov297
+  cell_rds: combined.rds         # .rds with cell-level x,y, phenotype, ROI
+  roi_labels_csv: OVTMA22_metadata.csv       # CSV with ROI→patient mapping OR ROI lables if on subject level
+  subject_labels_csv: 
+
+# Column names in the cell .rds
+cell_columns:
+  x: x
+  y: y
+  phenotype: metacluster
+  cell_id: cell_id
+  roi_id: region
+
+# Column names in the ROI-level label file
+roi_label_columns:
+  roi_id: FOV
+  
+
+# Graph options (choose at runtime too)
+graph:
+  type: gabriel        # one of: knn, radius, gabriel
+  knn_k: 8
+  radius: 25.0
+
+# Embedding hooks (resolved at runtime)
+embeddings:
+  structure:
+    method: fastrp
+    params:
+      dim: 64
+      weights: [1.0, 0.5, 0.25, 0.125]
+      projection_method: sparse # gaussian/sparse , sparse in the paper
+      input_matrix: trans # adj/trans, trans in the paper
+      normalization: False
+      alpha: 
+      weight: 
+      #C: 1.0
+    order_range: 2
+    aux_column: phenotype
+  node_attributes:
+    method: passthrough    # e.g., use raw marker/phenotype encodings
+
+# Fusion / Aggregation / Auxiliary loss — names map to stub registry in code
+fusion:
+  method: concat
+
+aggregation:
+  method: mean_pool        # choices: mean_pool, attention_stub
+
+auxiliary_loss:
+  method: none
+  params: {}
+
+roi_supervision:
+  enabled: true
+  method: metapath2vec
+  label_col: histology
+  params_fixed:
+    # For homogeneous fallback:
+    node_type: n
+    relation: to
+    undirected: true
+    sparse: true
+    epochs: 3
+
+    edge_index_dict:
+    num_nodes_dict:
+    metapaths:
+    return_node_type:
+  params_search_space:
+    dim: {"choice": [64, 128, 256]}
+    walk_length: {"choice": [40, 80, 120]}
+    context_size: {"choice": [5, 10, 20]}
+    walks_per_node: {"choice": [5, 10]}
+  aggregation_choices: ["mean_pool", "global_attention", "mil_attention"]
+

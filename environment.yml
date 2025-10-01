@@ -1,0 +1,20 @@
+name: tma22
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - matplotlib
+  - numpy
+  - pandas
+  - ipykernel
+  - jupyterlab
+  - python=3.10
+  - pyreadr
+  - scipy
+  - networkx
+  - scikit-learn
+  - pytest
+  - optuna
+  - pip
+  - pip:
+    - umap-learn
