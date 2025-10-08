@@ -4,6 +4,7 @@ import numpy as np
 import networkx as nx
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
+
 def _ensure_torch():
     try:
         import torch  # noqa: F401
@@ -218,7 +219,8 @@ def aggregate(
 
     # Globals
     if method in ("add_pool", "sum_pool", "max_pool") or method == "global_attention" or \
-       method in ("softmax_pool", "powermean_pool", "lstm_pool", "set2set"):
+       method in ("softmax_pool", "powermean_pool", "lstm_pool", "set2set") or \
+       method in ("mil_mean", "mil_max", "mil_attention"):
         from torch_geometric.nn import (
             global_add_pool, global_max_pool, global_mean_pool,
             Set2Set
@@ -228,9 +230,9 @@ def aggregate(
         from torch_geometric.nn.aggr import SoftmaxAggregation, PowerMeanAggregation, LSTMAggregation
 
     if method in ("sum_pool", "add_pool"):
-        out = torch_geometric.nn.global_add_pool(x, b)
+        out = global_add_pool(x, b)
     elif method == "max_pool":
-        out = torch_geometric.nn.global_max_pool(x, b)
+        out = global_max_pool(x, b)
     elif method == "set2set":
         s2s = Set2Set(d, processing_steps=int(set2set_steps), num_layers=int(set2set_layers)).to(device_t)
         out = s2s(x, b)  # shape: (B, 2d)
@@ -254,9 +256,9 @@ def aggregate(
         out = aggr(x, b, dim_size=num_groups)  # (B, hidden)
     # MIL poolers
     elif method == "mil_mean":
-        out = torch_geometric.nn.global_mean_pool(x, b)
+        out = global_mean_pool(x, b)
     elif method == "mil_max":
-        out = torch_geometric.nn.global_max_pool(x, b)
+        out = global_max_pool(x, b)
     elif method == "mil_attention":
         pool = _MILAttentionPooler(in_dim=d, hidden_dim=int(attn_hidden), device=str(device_t))
         out = pool(x, b)  # (B, d)

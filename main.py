@@ -1,8 +1,10 @@
 """
 # at the root of the project, example command:
-python main.py --config config/OVTMA_fov216.yaml --outdir output/OVTMA_fov216 --n-trials 20
-python main.py --config config/OVTMA_fov297_n2v.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_n2v
-python main.py --config config/OVTMA_fov297_fastrp.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp
+python main.py --config config/demo.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/demo
+python main.py --config config/OVTMA_fov297_fastrp.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp &
+python main.py --config config/OVTMA_fov297_fastrp_het.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp_het &
+CUDA_VISIBLE_DEVICES=1 python main.py --config config/OVTMA_fov216_fastrp.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov216_fastrp &
+CUDA_VISIBLE_DEVICES=2 python main.py --config config/OVTMA_fov216_fastrp_het.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov216_fastrp_het &
 
 main.py — Orchestrates BMS mxIF structure-embedding search and exports.
 
@@ -71,7 +73,7 @@ def import_project_modules():
         read_cells_rds, read_roi_labels_csv, read_subject_labels_csv, attach_labels
     )
     from src.graph_builder import build_graph
-    from src.node_embeddings import structure_embedding
+    from src.node_embeddings import node_embedding
     from src.stats import basic_graph_metrics
     # Visualization imports not used in main run:
     # from src.viz import plot_cells, plot_graph
@@ -81,7 +83,7 @@ def import_project_modules():
         "read_subject_labels_csv": read_subject_labels_csv,
         "attach_labels": attach_labels,
         "build_graph": build_graph,
-        "structure_embedding": structure_embedding,
+        "node_embedding": node_embedding,
         "basic_graph_metrics": basic_graph_metrics,
     }
 
@@ -316,6 +318,7 @@ def main():
     # Persist a resolved copy of the config used for the run
     save_yaml(run_cfg.outdir / "config" / "resolved_config.yaml", cfg)
 
+
     # === Load data ===
     if os.path.exists(run_cfg.outdir / "data" / "df.csv") and not run_cfg.override:
         logging.info("Loading cached data...")
@@ -326,7 +329,7 @@ def main():
         paths = cfg["paths"]
         cols_cell = cfg["cell_columns"]
         cols_roi = cfg["roi_label_columns"]
-        cols_subj = cfg.get("subject_labels_csv", None)
+        cols_subj = cfg.get("subject_label_columns", None)
 
         BASE = Path(paths["data_dir"])
         cells = modules["read_cells_rds"](BASE / paths["cell_rds"], cols_cell)
@@ -394,8 +397,6 @@ def main():
 
         # Build config object
         ss_cfg = SupervisedSearchConfig(
-            
-            method=sup_cfg["method"],                          # "node2vec" "fastrp" or "metapath2vec"
             params_fixed=sup_cfg.get("params_fixed", {}) or {},
             params_search_space=sup_cfg.get("params_search_space", {}) or {},
             aggregation_choices=sup_cfg.get("aggregation_choices", ["mean_pool"]),
@@ -413,7 +414,7 @@ def main():
         logging.info(f"[ROI supervision] best_meta={best_meta}")
 
         # Refit once on full data with best params and export ROI embeddings
-        Z_nodes = modules["structure_embedding"](G_all, method=ss_cfg.method, **best_node_params)
+        Z_nodes = modules["node_embedding"](G_all, df_aligned, best_node_params)
 
 
         E_roi, group_ids = aggregate(Z_nodes, G=G_all, method=best_meta["aggr_method"], return_group_ids=True)
@@ -429,7 +430,7 @@ def main():
         for k, v in best_node_params.items():
             if str(k).startswith("_"):                 # drops _cache_dir, _override, _grid_keys
                 continue
-            if k in {"edge_index_dict", "num_nodes_dict", "metapaths"}:
+            if k in {"edge_index_dict", "num_nodes_dict", "metapaths", "X_attr"}:
                 continue
             if isinstance(v, (sp.csr_matrix,np.ndarray)):
                 continue
@@ -449,7 +450,9 @@ def main():
 
         save_yaml(roi_emb_dir / "best_roi_supervision.yaml", {
             "best_score": float(best_score),
-            "method": ss_cfg.method,
+            "structure_method": best_node_params["structure_method"],
+            "attr_method": best_node_params["attr_method"],
+            "fusion_mode": best_node_params["fusion_mode"],
             "aggregation": best_meta["aggr_method"],
             "best_node_params": best_node_params_yaml,
             "diagnostics": diagnostics_yaml,

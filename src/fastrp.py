@@ -71,7 +71,7 @@ def fastrp_merge(U_list, weights, normalization=False):
 # the choice between adj matrix and trans matrix is decided in the conf
 def fastrp_wrapper(A, conf):
     U_list = fastrp_projection(A,
-                               q=len(conf['weights']),
+                               q=len(conf['weights']) if conf['weights'] is not None else 3,
                                dim=conf['dim'],
                                projection_method=conf['projection_method'],
                                input_matrix=conf['input_matrix'],

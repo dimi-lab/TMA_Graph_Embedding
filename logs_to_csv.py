@@ -73,6 +73,7 @@ def parse_line(line: str) -> Dict[str, Any] | None:
         "method": g["method"],             # categorical
         "aggregation": g["aggregation"],   # categorical
         "score": float(g["score"]),
+        "l1_ratio": float(params.get("l1_ratio", 1.0)),     # numeric
         "param.dim": pd.to_numeric(dim, errors="coerce"),  # numeric
         "param.attr_mode": attr_mode,                      # categorical (may be None)
         "param.weights_vec": weights_key,                  # categorical (unique vector token)

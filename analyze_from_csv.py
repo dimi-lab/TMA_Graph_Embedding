@@ -57,43 +57,70 @@ def summarize_impacts(
     return pd.DataFrame(out_rows).sort_values(["kind","value"], ascending=[True, False])
 
 def boxplot_by_category(df: pd.DataFrame, cat_col: str, score_col: str, out: Path):
+    """Boxplot sorted by median (desc) + overlaid jittered dots."""
     fig = plt.figure(figsize=(10, 6))
+
     cats = df[cat_col].astype("category")
-    cat_levels = list(cats.cat.categories)
-    groups = [df.loc[cats == c, score_col].dropna().values for c in cat_levels]
-    plt.boxplot(groups, labels=[str(c) for c in cat_levels], showfliers=False)
+    by = df.groupby(cats, dropna=False)[score_col]
+    # order by median score (descending)
+    order = by.median().sort_values(ascending=False).index.tolist()
+
+    groups = [df.loc[cats == c, score_col].dropna().values for c in order]
+    plt.boxplot(groups, tick_labels=[str(c) for c in order], showfliers=False)
+
+    # overlay jittered dots
+    rng = np.random.default_rng(0)  # reproducible jitter
+    for i, ys in enumerate(groups, start=1):
+        if ys.size == 0:
+            continue
+        xs = rng.normal(loc=i, scale=0.06, size=len(ys))
+        plt.plot(xs, ys, "o", alpha=0.35, markersize=3)
+
     plt.xticks(rotation=20, ha="right")
     plt.ylabel(score_col)
     plt.xlabel(cat_col)
-    plt.title(f"{score_col} by {cat_col}")
+    plt.title(f"{score_col} by {cat_col} (sorted by median)")
+    plt.grid(axis="y", linestyle="--", alpha=0.4)
     plt.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out, dpi=150)
     plt.close(fig)
 
-def bar_means_by_category(df: pd.DataFrame, cat_col: str, score_col: str, out: Path, top_n: int = 20):
+
+def bar_means_by_category(
+    df: pd.DataFrame, cat_col: str, score_col: str, out: Path, top_n: int = 100
+):
+    """Horizontal bar chart of top-N category means with SD error bars."""
+    cats = df[cat_col].astype("category")
     stats = (
-        df.groupby(df[cat_col].astype("category"), dropna=False)[score_col]
-          .agg(["mean","count"])
+        df.groupby(cats, dropna=False)[score_col]
+          .agg(mean="mean", count="count", std="std")
           .sort_values("mean", ascending=False)
           .head(top_n)
           .reset_index()
     )
+
     fig = plt.figure(figsize=(10, 6))
     y = np.arange(len(stats))
-    plt.barh(y, stats["mean"].values)
-    plt.yticks(y, [str(x) for x in stats[cat_col]])
+    means = stats["mean"].to_numpy()
+    stds = stats["std"].to_numpy()
+    labels = [str(x) for x in stats[cat_col]]
+
+    plt.barh(y, means, xerr=stds, capsize=3)
+    plt.yticks(y, labels)
     plt.gca().invert_yaxis()
     plt.xlabel("mean score")
-    plt.title(f"Top {min(top_n,len(stats))} {cat_col} levels by mean score")
+    plt.title(f"Top {min(top_n, len(stats))} {cat_col} levels by mean score (±SD)")
+    plt.grid(axis="x", linestyle="--", alpha=0.4)
     plt.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out, dpi=150)
     plt.close(fig)
 
-def scatter_vs_dim(df: pd.DataFrame, dim_col: str, score_col: str, out: Path):
+
+def scatter_vs_numerical(df: pd.DataFrame, num_col: str, score_col: str, out: Path):
     # simple scatter (dim is numeric)
-    x = pd.to_numeric(df[dim_col], errors="coerce")
+    x = pd.to_numeric(df[num_col], errors="coerce")
     y = pd.to_numeric(df[score_col], errors="coerce")
     m = x.notna() & y.notna()
     if m.sum() < 3:
@@ -101,9 +128,9 @@ def scatter_vs_dim(df: pd.DataFrame, dim_col: str, score_col: str, out: Path):
     fig = plt.figure(figsize=(8, 6))
     plt.scatter(x[m], y[m], alpha=0.6)
     r = np.corrcoef(x[m], y[m])[0,1]
-    plt.xlabel(dim_col)
+    plt.xlabel(num_col)
     plt.ylabel(score_col)
-    plt.title(f"{score_col} vs {dim_col} (r={r:.3f})")
+    plt.title(f"{score_col} vs {num_col} (r={r:.3f})")
     plt.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out, dpi=150)
@@ -145,16 +172,21 @@ def main():
     impacts.to_csv(impacts_path, index=False)
 
     # Plots
-    # 1) scatter for dim
+    # 1) scatter for numerical variables
     if "param.dim" in df.columns:
-        scatter_vs_dim(df, "param.dim", args.score_col, args.outdir / "scatter_score_vs_dim.png")
+        scatter_vs_numerical(df, "param.dim", args.score_col, args.outdir / "scatter_score_vs_dim.png")
+        boxplot_by_category(df, "param.dim", args.score_col, args.outdir / "box_param.dim.png")
+        bar_means_by_category(df, "param.dim", args.score_col, args.outdir / "bar_param.dim.png", top_n=args.topn_cats)
+    if "l1_ratio" in df.columns:
+        scatter_vs_numerical(df, "l1_ratio", args.score_col, args.outdir / "scatter_score_vs_l1_ratio.png")
+        boxplot_by_category(df, "l1_ratio", args.score_col, args.outdir / "box_l1_ratio.png")
+        bar_means_by_category(df, "l1_ratio", args.score_col, args.outdir / "bar_l1_ratio.png", top_n=args.topn_cats)
 
     # 2) categorical boxplots + bar(means)
     for cat_col in args.categorical:
         if cat_col in df.columns and df[cat_col].notna().any():
-            # Only boxplot if not too many levels (<= 30), else skip to keep readable
-            if df[cat_col].astype("category").nunique() <= 30:
-                boxplot_by_category(df, cat_col, args.score_col, args.outdir / f"box_{cat_col}.png")
+
+            boxplot_by_category(df, cat_col, args.score_col, args.outdir / f"box_{cat_col}.png")
             bar_means_by_category(df, cat_col, args.score_col, args.outdir / f"bar_{cat_col}.png", top_n=args.topn_cats)
 
     print(f"Saved impacts to: {impacts_path.resolve()}")

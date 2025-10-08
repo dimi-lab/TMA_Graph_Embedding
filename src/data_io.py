@@ -26,15 +26,13 @@ def read_roi_labels_csv(path: str, colmap: Dict[str,str]) -> pd.DataFrame:
     if colmap.get('patient_id') is not None:
         rename = {
             colmap.get("roi_id","ROI"): "ROI",
-            colmap.get("roi_label","roi_label"): "roi_label",
             colmap.get("patient_id","patient_id"): "patient_id",
         }
         df = df.rename(columns=rename)
-        # remove rows with roi_label is null
-        out = df[df["roi_label"].notna()]
-        logging.info(f"Removed {df[df['roi_label'].isna()].shape[0]} rows with roi_label is null")
-        if not set(["ROI","patient_id","roi_label"]).issubset(df.columns):
-            raise ValueError("ROI labels must contain ROI, roi_label, and patient_id")
+
+        if not set(["ROI","patient_id"]).issubset(df.columns):
+            raise ValueError("ROI labels must contain ROI, and patient_id")
+        return df
     else:
         rename = {
             colmap.get("roi_id","ROI"): "ROI",
@@ -47,18 +45,19 @@ def read_roi_labels_csv(path: str, colmap: Dict[str,str]) -> pd.DataFrame:
         if not set(["ROI","roi_label"]).issubset(df.columns):
             raise ValueError("ROI labels must contain ROI, and roi_label")
    
-    return out
+        return out
 def read_subject_labels_csv(path: str, colmap: Dict[str,str]) -> pd.DataFrame:
     df = pd.read_csv(path)
     rename = {
         colmap.get("patient_id","patient_id"): "patient_id",
+        colmap.get("patient_label","patient_label"): "patient_label",
     }
     df = df.rename(columns=rename)
     # remove rows with patient_id is null
-    df = df[df["patient_id"].notna()]
-    logging.info(f"Removed {df[df['patient_id'].isna()].shape[0]} rows with patient_id is null")
-    if "patient_id" not in df.columns:
-        raise ValueError("Subject labels must contain patient_id")
+    df = df[df["patient_label"].notna()]
+    logging.info(f"Removed {df[df['patient_label'].isna()].shape[0]} rows with patient_label is null")
+    if not set(["patient_id","patient_label"]).issubset(df.columns):
+        raise ValueError("Subject labels must contain patient_id and patient_label")
     return df
 
 def attach_labels(df_cells: pd.DataFrame, df_roi: pd.DataFrame, df_subj: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -67,4 +66,5 @@ def attach_labels(df_cells: pd.DataFrame, df_roi: pd.DataFrame, df_subj: pd.Data
     if df_subj is not None:
         # keep only rows whose patient_id exists in both out and df_subj
         out = out.merge(df_subj, on="patient_id", how="inner")
+        out['roi_label'] = out['patient_label'] # ROI level label is the same as patient level label
     return out

@@ -1,9 +1,9 @@
 # Paths
 paths:
-  data_dir: /projects/wangc/m344313/OVTMA_project/data/OVTMA_fov297
+  data_dir: /projects/wangc/m344313/OVTMA_project/data/OVTMA_fov216
   cell_rds: combined.rds         # .rds with cell-level x,y, phenotype, ROI
-  roi_labels_csv: OVTMA22_metadata.csv       # CSV with ROI→patient mapping OR ROI lables if on subject level
-  subject_labels_csv: 
+  roi_labels_csv: fov_level_216fov_forCaitlin.csv     # CSV with ROI→patient mapping OR ROI lables if on subject level
+  subject_labels_csv: subject_level_216fov_forCaitlin.csv
 
 # Column names in the cell .rds
 cell_columns:
@@ -17,6 +17,13 @@ cell_columns:
 roi_label_columns:
   roi_id: FOV
   roi_label: histology
+  patient_id: Participant
+
+# Column names in the subject-level label file
+subject_label_columns:
+  patient_id: Participant
+  patient_label: histology
+
 
 # Graph options (choose at runtime too)
 graph:
@@ -37,7 +44,8 @@ roi_supervision:
 
   # Fixed knobs (stay constant across trials)
   params_fixed:
-    structure_method: fastrp
+    structure_method: fastrp-het
+    fusion_mode: none # fastrp-het only supports none
     attr_method: passthrough
     attr_cols: #additional columns to concatenate(ex. functional markers)
     normalization: False
@@ -47,7 +55,6 @@ roi_supervision:
   # Search space (randomly sampled)
   params_search_space:
     l1_ratio: [0.0, 0.25,0.5,0.75, 1.0]
-    fusion_mode: ["none", "concat"] 
     dim: [64, 128, 256,512]
     weights:
     # --- baselines  ---
@@ -77,4 +84,3 @@ roi_supervision:
 
 
   aggregation_choices: ["mean_pool", "global_attention", "mil_attention"]
-

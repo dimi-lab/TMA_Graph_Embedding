@@ -1,6 +1,0 @@
-feature,kind,metric,value,n,note
-param.attr_mode,categorical,top_mean_minus_global,0.011987698412698311,504,top=concat
-param.weights_vec,categorical,top_mean_minus_global,0.009573412698412609,504,"top=[1,2,4,8,16,32,64,128,256,512]"
-aggregation,categorical,top_mean_minus_global,0.005970634920634876,504,top=mean_pool
-method,categorical,top_mean_minus_global,0.0,504,top=fastrp
-param.dim,numeric,pearson_r,0.8877836529390264,504,

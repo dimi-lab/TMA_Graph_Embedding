@@ -14,9 +14,9 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.pipeline import make_pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, GroupKFold
-from sklearn.metrics import roc_auc_score, balanced_accuracy_score
+from sklearn.metrics import roc_auc_score, balanced_accuracy_score, accuracy_score
 
-from src.node_embeddings import structure_embedding, node_attribute_embedding
+from src.node_embeddings import node_embedding
 from src.aggregation import aggregate
 
 from pathlib import Path
@@ -32,7 +32,10 @@ def _grid_params_only(node_params: Dict) -> Dict:
     if not keys:
         # fallback: all non-internal keys
         keys = [k for k in node_params.keys() if not k.startswith("_")]
-    return {k: node_params[k] for k in keys if k in node_params}
+    blacklist = ["l1_ratio"]
+    def _keep(k: str) -> bool:
+        return (k in node_params) and (k not in blacklist) and (not k.startswith("clf__"))
+    return {k: node_params[k] for k in keys if _keep(k)}
 
 def _filename_from_grid(method: str, grid_params: Dict) -> str:
     kvs = []
@@ -85,14 +88,15 @@ def _fmt_list(val, max_elems=6):
 
 def _node_embedding_with_cache(
     G_all: nx.Graph,
-    method: str,
+    df_aligned: pd.DataFrame,
     node_params: Dict,
     cache_dir: Optional[Path],
     override: bool,
 ) -> np.ndarray:
-    if method in {"fastrp", "fastrp-het"}: # no need to cache for these methods
+    structure_method = str(node_params.get("structure_method", "random")).lower()
+    if structure_method not in {"node2vec", "metapath2vec"}: # only need to cache for these time_consuming methods
         cache_dir = None
-    out_path = _cache_path_from_grid(cache_dir, method, _grid_params_only(node_params)) if cache_dir else None
+    out_path = _cache_path_from_grid(cache_dir, structure_method, _grid_params_only(node_params)) if cache_dir else None
 
     # Try load
     if out_path is not None and out_path.exists() and not override:
@@ -110,8 +114,7 @@ def _node_embedding_with_cache(
             logging.warning(f"Failed to read cached .mat '{out_path.name}': {e}; recomputing.")
 
     # Compute fresh
-    Z = structure_embedding(G_all, method=method, **(node_params or {}))
-    Z = np.asarray(Z, dtype=np.float64)
+    Z = node_embedding(G_all, df_aligned, node_params)
 
     # Save the embedding in .mat
     if out_path is not None:
@@ -126,7 +129,6 @@ def _node_embedding_with_cache(
 
 @dataclass
 class SupervisedSearchConfig:
-    method: str                            # "node2vec" | "metapath2vec"
     params_fixed: Dict                     # fixed params for the chosen method
     params_search_space: Dict             
     aggregation_choices: List[str]         # e.g. ["mean_pool","global_attention","set2set","mil_attention"]
@@ -147,9 +149,16 @@ def _roi_labels_from_df(df_aligned: pd.DataFrame, label_col: str) -> pd.DataFram
         raise ValueError(f"Label column '{label_col}' is not constant within ROI.")
     return lab
 
-def _score_multiclass_robust(y_true, proba, n_classes) -> float:
+def _score_multiclass_robust(y_true, proba, n_classes,type="accuracy") -> float:
     """Macro ROC-AUC when possible; else balanced accuracy."""
-    try:
+    if type == "accuracy":
+        y_pred = np.argmax(proba, axis=1)
+        return float(accuracy_score(y_true, y_pred))
+    if type == "average_acc":
+        # fallback: BA with argmax predictions
+        y_pred = np.argmax(proba, axis=1)
+        return float(balanced_accuracy_score(y_true, y_pred))
+    elif type == "roc_auc":
         if n_classes == 2:
             if len(np.unique(y_true)) < 2:
                 raise ValueError("single-class fold")
@@ -158,15 +167,12 @@ def _score_multiclass_robust(y_true, proba, n_classes) -> float:
             if len(np.unique(y_true)) < 2:
                 raise ValueError("single-class fold")
             return float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
-    except Exception:
-        # fallback: BA with argmax predictions
-        y_pred = np.argmax(proba, axis=1)
-        return float(balanced_accuracy_score(y_true, y_pred))
+    else:
+        raise ValueError(f"Invalid type: {type}")
 
 def _evaluate_once(
     G_all: nx.Graph,
     df_aligned: pd.DataFrame,
-    method: str,
     node_params: Dict,
     aggr_method: str,
     label_col: str,
@@ -181,25 +187,12 @@ def _evaluate_once(
     # 1) Node embedding
     Z = _node_embedding_with_cache(
         G_all=G_all,
-        method=method,
+        df_aligned=df_aligned,
         node_params=node_params,
         cache_dir=node_params.get("_cache_dir"),
         override=bool(node_params.get("_override", False)),
     )# (N_nodes, d)\
-
-    # 1b) Optional node-attribute augmentation
-    attr_mode = str(node_params.get("attr_mode", "none")).lower()
-    if attr_mode == "concat":
-        attr_method = str(node_params.get("attr_method", "passthrough")).lower()
-        attr_cols = node_params.get("attr_cols", None)  # e.g., ["area","intensity"]
-        X_attr = node_attribute_embedding(df_aligned, method=attr_method, cols=attr_cols)
-        if X_attr.shape[0] != Z.shape[0]:
-            raise ValueError(f"Attribute rows ({X_attr.shape[0]}) != embedding rows ({Z.shape[0]}). "
-                             f"Ensure df_aligned is aligned to G_all.")
-        # concat feature-wise
-        Z = np.hstack([Z.astype(float, copy=False), X_attr.astype(float, copy=False)])
-    elif attr_mode != "none":
-        raise ValueError(f"Unknown attr_mode='{attr_mode}'. Use 'none' or 'concat'.")
+    
         
     # 2) Aggregate to ROI level
     E, group_ids = aggregate(
@@ -261,35 +254,40 @@ def _evaluate_once(
        splitter = StratifiedKFold(n_splits=n_splits_eff, shuffle=True, random_state=random_state)
        split_iter = splitter.split(E, y)
 
-    clf = make_pipeline(
-        StandardScaler(with_mean=True, with_std=True),
-        LogisticRegression(
-            max_iter=2000,
-            class_weight="balanced",
-            solver="lbfgs",
-            n_jobs=None,
-            random_state=random_state,
-        ),
-    )
+
     clf_list = [] # list of clf objects
     scores = []
     per_class_fold_acc_int = {k: [] for k in range(n_classes)}
    
     for tr, va in split_iter:
+        clf = make_pipeline(
+            StandardScaler(with_mean=True, with_std=True),
+            LogisticRegression(
+                max_iter=2000,
+                class_weight="balanced",
+                solver="saga",
+                n_jobs=None,
+                random_state=random_state,
+                penalty="elasticnet",
+                l1_ratio=float(node_params.get("l1_ratio", 1.0)),
+            ),
+        )
         clf.fit(E[tr], y[tr])
         proba = clf.predict_proba(E[va])
         fold = _score_multiclass_robust(y[va], proba, n_classes)
         scores.append(fold)
         # record detailed predictions by class
         y_pred = clf.predict(E[va])
+        
         for k in range(n_classes):
             mask = (y[va] == k)
             if mask.sum() > 0:
                 acc_k = float((y_pred[mask] == k).mean())
             else:
                 acc_k = float("nan")
-        per_class_fold_acc_int[k].append(acc_k)
+            per_class_fold_acc_int[k].append(acc_k)
         clf_list.append(clf)
+
     # summarize per-class mean ± std (ignore NaNs safely)
     classes_str = list(map(str, le.classes_))
     per_class_fold_acc = {classes_str[k]: per_class_fold_acc_int[k] for k in range(n_classes)}
@@ -307,6 +305,7 @@ def _evaluate_once(
         "per_class_mean": per_class_mean,          # dict[str] -> float
         "per_class_std": per_class_std,            # dict[str] -> float
         "n_splits_effective": int(n_splits_eff),
+        "clf_l1_ratio": float(node_params.get("l1_ratio", 1.0)),
      }
 
 def _iter_param_grid(space: Dict) -> List[Dict]:
@@ -362,17 +361,12 @@ def supervised_search(
 
         node_params["_cache_dir"] = cfg.cache_dir
         node_params["_override"]  = cfg.override
-        if cfg.method == "fastrp-het":
-            attr_method = str(node_params.get("attr_method", "passthrough")).lower()
-            attr_cols = node_params.get("attr_cols", None)  # e.g., ["area","intensity"]
-            X_attr = node_attribute_embedding(df_aligned, method=attr_method, cols=attr_cols)
-            node_params["X_attr"] = sp.csr_matrix(X_attr)
+
         for ai, aggr_method in enumerate(cfg.aggregation_choices, start=1):
             try:
                 clf_list, score, diag = _evaluate_once(
                     G_all=G_all,
                     df_aligned=df_aligned,
-                    method=cfg.method,
                     node_params=node_params,
                     aggr_method=aggr_method,
                     label_col=cfg.label_col,
@@ -382,7 +376,7 @@ def supervised_search(
                 )
                 logging.info(
                     f"[{(gi-1)*len(cfg.aggregation_choices)+ai}/{total}] "
-                    f"{cfg.method} + {aggr_method} -> {score:.4f} | params={combo}"
+                    f"{node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} -> {score:.4f} | params={combo}"
                 )
                 if score > best_score:
                     best_score = score
@@ -395,7 +389,7 @@ def supervised_search(
                             f"{c}:{diag['per_class_mean'][c]:.3f}±{diag['per_class_std'][c]:.3f}"
                             for c in cls_order
                         )
-                        logging.info(f"[best-so-far] {cfg.method}+{aggr_method} | by-class acc: {cls_str}")
+                        logging.info(f"[best-so-far] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} | by-class acc: {cls_str}")
                     best_clf_list = clf_list
 
             except Exception as e:

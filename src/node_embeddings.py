@@ -6,12 +6,41 @@ import networkx as nx
 from typing import Dict, Optional
 import warnings
 
-
 from scipy.sparse import csr_matrix
+import scipy.sparse as sp
 
-def node_attribute_embedding(df: pd.DataFrame, method: str = "passthrough", cols: Optional[list]=None, **kwargs) -> np.ndarray:
-    method = (method or "passthrough").lower()
-    if method == "passthrough":
+def node_embedding(G_all: nx.Graph, df_aligned: pd.DataFrame, node_params: Dict) -> np.ndarray:      
+    fusion_mode = str(node_params.get("fusion_mode", "none")).lower()
+
+    attr_method = str(node_params.get("attr_method", "passthrough")).lower()
+    attr_cols = node_params.get("attr_cols", None)  # e.g., ["area","intensity"]
+    X_attr = attribute_embedding(df_aligned, attr_method=attr_method, cols=attr_cols)
+
+    structure_method = str(node_params.get("structure_method", "random")).lower()
+    if node_params['structure_method'] == 'fastrp-het':
+        assert fusion_mode == 'none', "fusion_mode must be none if structure_method is fastrp-het"
+        node_params['X_attr'] = sp.csr_matrix(X_attr)
+    Z = structure_embedding(G_all, method=structure_method, **(node_params or {}))
+    Z = np.asarray(Z, dtype=np.float64)
+    # concat feature-wise
+    
+    return fuse_embedding(Z, X_attr, fusion_mode)
+
+
+def fuse_embedding(structure_emb,attr_emb=None,fusion_mode: str = "none") -> np.ndarray:
+    fusion_mode = (fusion_mode or "none").lower()
+    if fusion_mode == "none":
+        return structure_emb
+    elif fusion_mode == "concat":
+        assert attr_emb is not None, "attr_emb must be provided if fusion_mode is concat"
+        assert attr_emb.shape[0] == structure_emb.shape[0], "attr_emb and structure_emb must have the same number of rows"
+        return np.hstack([attr_emb, structure_emb])
+
+    raise NotImplementedError(f"Fusion mode not implemented: {fusion_mode}")
+
+def attribute_embedding(df: pd.DataFrame, attr_method: str = "passthrough", cols: Optional[list]=None, **kwargs) -> np.ndarray:
+    attr_method = (attr_method or "passthrough").lower()
+    if attr_method == "passthrough":
         # one-hot as float right away
         phenos = pd.get_dummies(df["phenotype"], prefix="ph", dtype=float)
 
@@ -25,7 +54,7 @@ def node_attribute_embedding(df: pd.DataFrame, method: str = "passthrough", cols
 
         X = pd.concat([phenos, extra], axis=1).fillna(0.0)
         return X.to_numpy(dtype=float)
-    raise NotImplementedError(f"Attribute embedding method not implemented: {method}")
+    raise NotImplementedError(f"Attribute embedding attr_method not implemented: {attr_method}")
 
    
 
@@ -49,7 +78,7 @@ def structure_embedding(
         - normalization: bool = False
         - alpha: Optional[float] = None
         - weight: str = 'weight'
-        - return_list: bool = False
+
 
       node2vec (PyG):
         - walk_length: int = 80
@@ -126,49 +155,17 @@ def structure_embedding(
     elif method == "fastrp":
         from src.fastrp import fastrp_projection, fastrp_wrapper
         A, conf = prepare_fastrp(G, params)
-        if params.get('return_list') is True:
-            U_list = fastrp_projection(
-                A,
-                q=len(conf['weights']),
-                dim=conf['dim'],
-                projection_method=conf['projection_method'],
-                input_matrix=conf['input_matrix'],
-                alpha=conf['alpha'],
-                X_attr=conf['X_attr'],
-            )
-            return U_list
         U = fastrp_wrapper(A, conf)
         return U
     elif method == 'fastrp-het':
         from src.fastrp import fastrp_projection, fastrp_wrapper
         
         A, conf = prepare_fastrp(G, params)
-        if params.get('return_list') is True:
-            U_list = fastrp_projection(
-                A, 
-                q=len(conf['weights']),
-                dim=conf['dim'],
-                projection_method=conf['projection_method'],
-                input_matrix=conf['input_matrix'],
-                alpha=conf['alpha'],
-                X_attr=conf['X_attr'],
-            )
-            return U_list
         U = fastrp_wrapper(A, conf)
         return U
     elif method == 'fame':
         from src.fame import fastrp_wrapper, fastrp_projection
         A, conf = prepare_fastrp(G, params)
-        if params.get('return_list') is True:
-            U_list = fastrp_projection(
-                A,
-                q=len(conf['weights']),
-                dim=conf['dim'],
-                projection_method=conf['projection_method'],
-                input_matrix=conf['input_matrix'],
-                alpha=conf['alpha'],
-            )
-            return U_list
         U = fastrp_wrapper(A, conf)
         return U
 
@@ -360,11 +357,6 @@ def prepare_fastrp(G,params):
         # For older NetworkX
         A_nx = nx.to_scipy_sparse_matrix(G, nodelist=nodelist, weight=None, format="csr")
     A = csr_matrix(A_nx)  # ensure scipy.sparse.csr_matrix
-    
-    node_feature = params.get("node_feature", None)
-
-    if node_feature is True:
-        assert params.get('X_attr', None) is not None, "X_attr must be provided if node_feature is True"
 
     conf = {
         'projection_method': params.get("projection_method", "gaussian"),

@@ -37,44 +37,20 @@ roi_supervision:
 
   # Fixed knobs (stay constant across trials)
   params_fixed:
-    structure_method: fastrp
+    structure_method: fastrp-het
+    fusion_mode: none # fastrp-het only supports none
     attr_method: passthrough
     attr_cols: #additional columns to concatenate(ex. functional markers)
     normalization: False
     projection_method: sparse # gaussian/sparse , sparse in the paper
     input_matrix: trans # adj/trans, trans in the paper
+    weights: 
 
-  # Search space (randomly sampled)
   params_search_space:
     l1_ratio: [0.0, 0.25,0.5,0.75, 1.0]
-    fusion_mode: ["none", "concat"] 
     dim: [64, 128, 256,512]
-    weights:
-    # --- baselines  ---
-    - 
-    - [1,1,1,1,1,1]
-    - [1,2,4,8,16,32]
-    - [32,16,8,4,2,1]
-
-    # --- last-k zeros (keep only small hops up to q-k) ---
-    - [1,1,1,1,1,0]   # k=1
-    - [1,1,1,1,0,0]   # k=2
-    - [1,1,1,0,0,0]   # k=3
-    - [1,1,0,0,0,0]   # k=4
-    - [1,0,0,0,0,0]   # k=5
-    - [0,0,0,0,0,0]   # k=6
-
-
-    # --- first-k zeros (ignore small hops; emphasize long walks) ---
-    - [0,1,1,1,1,1]   # k=1
-    - [0,0,1,1,1,1]   # k=2
-    - [0,0,0,1,1,1]   # k=3
-    - [0,0,0,0,1,1]   # k=4
-    - [0,0,0,0,0,1]   # k=5
-    #- [0,0,0,0,0,0]   # k=6
-
-
-
-
-  aggregation_choices: ["mean_pool", "global_attention", "mil_attention"]
-
+    
+  aggregation_choices: ['mean_pool', 'add_pool','sum_pool', 'max_pool',
+                       'set2set', 'global_attention',
+                       'softmax_pool', 'powermean_pool', 'lstm_pool',
+                       'mil_mean', 'mil_max', 'mil_attention']
