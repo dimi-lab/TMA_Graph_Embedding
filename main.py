@@ -273,7 +273,6 @@ def main():
         ss_cfg = SupervisedSearchConfig(
             params_fixed=sup_cfg.get("params_fixed", {}) or {},
             params_search_space=sup_cfg.get("params_search_space", {}) or {},
-            aggregation_choices=sup_cfg.get("aggregation_choices", ["mean_pool"]),
             label_col='roi_label',
             group_col=sup_cfg.get("group_col", None),
             n_splits=int(sup_cfg.get("n_splits", 5)),
@@ -283,16 +282,16 @@ def main():
             n_jobs=int(sup_cfg.get("n_jobs", 1)),
         )
 
-        best_score, best_node_params, best_meta, best_clf_list = supervised_search(G_all, df_aligned, ss_cfg)
+        best_score, best_hyper_params, best_meta, best_clf_list = supervised_search(G_all, df_aligned, ss_cfg)
         logging.info(f"[ROI supervision] best_score={best_score:.6f}")
-        logging.info(f"[ROI supervision] best_node_params={best_node_params}")
+        logging.info(f"[ROI supervision] best_hyper_params={best_hyper_params}")
         logging.info(f"[ROI supervision] best_meta={best_meta}")
 
         # Refit once on full data with best params and export ROI embeddings
-        Z_nodes = modules["node_embedding"](G_all, df_aligned, best_node_params)
+        Z_nodes = modules["node_embedding"](G_all, df_aligned, best_hyper_params)
 
 
-        E_roi, group_ids = aggregate(Z_nodes, G=G_all, method=best_meta["aggr_method"], return_group_ids=True)
+        E_roi, group_ids = aggregate(Z_nodes, G=G_all, method=best_hyper_params["aggr_method"], return_group_ids=True)
 
         # Save outputs
         roi_emb_dir = run_cfg.outdir / "evaluate" / "roi_supervised_best"
@@ -301,8 +300,8 @@ def main():
         save_pickle(roi_emb_dir / "group_ids.pkl", group_ids)
         save_pickle(roi_emb_dir / "best_clf_list.pkl", best_clf_list)
         # sanitize params (drop internals and convert types)
-        best_node_params_yaml = {}
-        for k, v in best_node_params.items():
+        best_hyper_params_yaml = {}
+        for k, v in best_hyper_params.items():
             if str(k).startswith("_"):                 # drops _cache_dir, _override, _grid_keys
                 continue
             if k in {"edge_index_dict", "num_nodes_dict", "metapaths", "X_attr"}:
@@ -313,7 +312,7 @@ def main():
                 v = str(v)
             elif isinstance(v, (np.floating, np.integer)):
                 v = v.item()
-            best_node_params_yaml[str(k)] = v
+            best_hyper_params_yaml[str(k)] = v
 
         diagnostics_yaml = {}
         for k, v in best_meta.items():
@@ -325,11 +324,11 @@ def main():
 
         save_yaml(roi_emb_dir / "best_roi_supervision.yaml", {
             "best_score": float(best_score),
-            "structure_method": best_node_params["structure_method"],
-            "attr_method": best_node_params["attr_method"],
-            "fusion_mode": best_node_params["fusion_mode"],
-            "aggregation": best_meta["aggr_method"],
-            "best_node_params": best_node_params_yaml,
+            "structure_method": best_hyper_params["structure_method"],
+            "attr_method": best_hyper_params["attr_method"],
+            "fusion_mode": best_hyper_params["fusion_mode"],
+            "aggr_method": best_hyper_params["aggr_method"],
+            "best_hyper_params": best_hyper_params_yaml,
             "diagnostics": diagnostics_yaml,
         })
 

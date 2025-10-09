@@ -139,7 +139,7 @@ def aggregate(
     G : optional nx.Graph used to build 'batch' if not provided
     method : str
         One of:
-          PyG globals: 'mean_pool', 'add_pool'/'sum_pool', 'max_pool',
+          PyG globals: 'mean_pool', 'add_pool', 'max_pool',
                        'set2set', 'global_attention',
                        'softmax_pool', 'powermean_pool', 'lstm_pool'
           MIL: 'mil_mean', 'mil_max', 'mil_attention'
@@ -218,7 +218,7 @@ def aggregate(
     num_groups = int(b.max().item()) + 1 if b.numel() > 0 else 0
 
     # Globals
-    if method in ("add_pool", "sum_pool", "max_pool") or method == "global_attention" or \
+    if method in ("add_pool", "max_pool") or method == "global_attention" or \
        method in ("softmax_pool", "powermean_pool", "lstm_pool", "set2set") or \
        method in ("mil_mean", "mil_max", "mil_attention"):
         from torch_geometric.nn import (
@@ -229,7 +229,7 @@ def aggregate(
         from torch_geometric.nn.aggr import AttentionalAggregation as GlobalAttention
         from torch_geometric.nn.aggr import SoftmaxAggregation, PowerMeanAggregation, LSTMAggregation
 
-    if method in ("sum_pool", "add_pool"):
+    if method == "add_pool":
         out = global_add_pool(x, b)
     elif method == "max_pool":
         out = global_max_pool(x, b)

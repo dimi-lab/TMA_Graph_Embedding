@@ -23,19 +23,19 @@ from pathlib import Path
 from scipy.io import savemat, loadmat
 import scipy.sparse as sp
 # ---- Human-readable filename helpers ----
-def _grid_params_only(node_params: Dict) -> Dict:
+def _grid_params_only(hyper_params: Dict) -> Dict:
     """
     Return only the params that came from the grid (i.e., those that vary).
-    We pass these keys in via node_params['_grid_keys'] inside supervised_search.
+    We pass these keys in via hyper_params['_grid_keys'] inside supervised_search.
     """
-    keys = node_params.get("_grid_keys")
+    keys = hyper_params.get("_grid_keys")
     if not keys:
         # fallback: all non-internal keys
-        keys = [k for k in node_params.keys() if not k.startswith("_")]
+        keys = [k for k in hyper_params.keys() if not k.startswith("_")]
     blacklist = ["l1_ratio"]
     def _keep(k: str) -> bool:
-        return (k in node_params) and (k not in blacklist) and (not k.startswith("clf__"))
-    return {k: node_params[k] for k in keys if _keep(k)}
+        return (k in hyper_params) and (k not in blacklist) and (not k.startswith("clf__"))
+    return {k: hyper_params[k] for k in keys if _keep(k)}
 
 def _filename_from_grid(method: str, grid_params: Dict) -> str:
     kvs = []
@@ -89,14 +89,14 @@ def _fmt_list(val, max_elems=6):
 def _node_embedding_with_cache(
     G_all: nx.Graph,
     df_aligned: pd.DataFrame,
-    node_params: Dict,
+    hyper_params: Dict,
     cache_dir: Optional[Path],
     override: bool,
 ) -> np.ndarray:
-    structure_method = str(node_params.get("structure_method", "random")).lower()
+    structure_method = str(hyper_params.get("structure_method", "random")).lower()
     if structure_method not in {"node2vec", "metapath2vec"}: # only need to cache for these time_consuming methods
         cache_dir = None
-    out_path = _cache_path_from_grid(cache_dir, structure_method, _grid_params_only(node_params)) if cache_dir else None
+    out_path = _cache_path_from_grid(cache_dir, structure_method, _grid_params_only(hyper_params)) if cache_dir else None
 
     # Try load
     if out_path is not None and out_path.exists() and not override:
@@ -114,7 +114,7 @@ def _node_embedding_with_cache(
             logging.warning(f"Failed to read cached .mat '{out_path.name}': {e}; recomputing.")
 
     # Compute fresh
-    Z = node_embedding(G_all, df_aligned, node_params)
+    Z = node_embedding(G_all, df_aligned, hyper_params)
 
     # Save the embedding in .mat
     if out_path is not None:
@@ -130,8 +130,7 @@ def _node_embedding_with_cache(
 @dataclass
 class SupervisedSearchConfig:
     params_fixed: Dict                     # fixed params for the chosen method
-    params_search_space: Dict             
-    aggregation_choices: List[str]         # e.g. ["mean_pool","global_attention","set2set","mil_attention"]
+    params_search_space: Dict   
     label_col: str                         # ROI-level label column name in df_aligned (same per-ROI)
     group_col: Optional[str] = None        # optional grouping column, e.g. "Subject" to group CV by patient
     n_splits: int = 5
@@ -172,8 +171,7 @@ def _score_multiclass_robust(y_true, proba, n_classes,type="accuracy") -> float:
 def _evaluate_once(
     G_all: nx.Graph,
     df_aligned: pd.DataFrame,
-    node_params: Dict,
-    aggr_method: str,
+    hyper_params: Dict,
     label_col: str,
     group_col: Optional[str],
     n_splits: int,
@@ -187,13 +185,14 @@ def _evaluate_once(
     Z = _node_embedding_with_cache(
         G_all=G_all,
         df_aligned=df_aligned,
-        node_params=node_params,
-        cache_dir=node_params.get("_cache_dir"),
-        override=bool(node_params.get("_override", False)),
+        hyper_params=hyper_params,
+        cache_dir=hyper_params.get("_cache_dir"),
+        override=bool(hyper_params.get("_override", False)),
     )# (N_nodes, d)\
     
         
     # 2) Aggregate to ROI level
+    aggr_method = str(hyper_params.get("aggr_method", "mean_pool")).lower()
     E, group_ids = aggregate(
         Z, G=G_all, method=aggr_method, return_group_ids=True
     )  # E: (N_ROIs, d’), group_ids ~ ordered ROI ids as seen in G_all
@@ -268,7 +267,7 @@ def _evaluate_once(
                 n_jobs=1, # avoid nested parallelization
                 random_state=random_state,
                 penalty="elasticnet",
-                l1_ratio=float(node_params.get("l1_ratio", 1.0)),
+                l1_ratio=float(hyper_params.get("l1_ratio", 1.0)),
             ),
         )
         clf.fit(E[tr], y[tr])
@@ -304,17 +303,17 @@ def _evaluate_once(
         "per_class_mean": per_class_mean,          # dict[str] -> float
         "per_class_std": per_class_std,            # dict[str] -> float
         "n_splits_effective": int(n_splits_eff),
-        "clf_l1_ratio": float(node_params.get("l1_ratio", 1.0)),
+        "clf_l1_ratio": float(hyper_params.get("l1_ratio", 1.0)),
      }
 # ---- picklable worker for parallel map ----
 def _run_one_combo(args) -> Tuple[bool, Dict]:
     """
-    Returns (ok, payload). If ok=True, payload has: score, node_params, aggr_method, diag, clf_list
+    Returns (ok, payload). If ok=True, payload has: score, hyper_params, diag, clf_list
     If ok=False, payload has: 'error'
     """
     try:
         import os
-        (G_all, df_aligned, node_params, aggr_method, label_col, group_col, n_splits, random_state) = args
+        (G_all, df_aligned, hyper_params,  label_col, group_col, n_splits, random_state) = args
 
         # make sure each worker is single-threaded (helps with MKL/BLAS oversubscription)
         os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -324,12 +323,11 @@ def _run_one_combo(args) -> Tuple[bool, Dict]:
         os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
         clf_list, score, diag = _evaluate_once(
-            G_all, df_aligned, node_params, aggr_method, label_col, group_col, n_splits, random_state
+            G_all, df_aligned, hyper_params, label_col, group_col, n_splits, random_state
         )
         return True, {
             "score": score,
-            "node_params": node_params,
-            "aggr_method": aggr_method,
+            "hyper_params": hyper_params,
             "diag": diag,
             "clf_list": clf_list,
         }
@@ -368,27 +366,25 @@ def supervised_search(
     df_aligned: pd.DataFrame,
     cfg: SupervisedSearchConfig,
 ) -> Tuple[float, Dict, Dict, List]:
-    if not cfg.aggregation_choices:
-        raise ValueError("aggregation_choices must be a non-empty list.")
-
+    
     grid = _iter_param_grid(cfg.params_search_space or {})
     tasks = []
     for combo in grid:
-        node_params = dict(cfg.params_fixed or {})
-        node_params.update(combo)
-        node_params["_grid_keys"] = list(combo.keys())
-        node_params["_cache_dir"] = cfg.cache_dir
-        node_params["_override"]  = cfg.override
-        for aggr_method in cfg.aggregation_choices:
-            tasks.append((
-                G_all, df_aligned, node_params, aggr_method,
-                cfg.label_col, cfg.group_col, cfg.n_splits, cfg.random_state
-            ))
+        hyper_params = dict(cfg.params_fixed or {})
+        hyper_params.update(combo)
+        hyper_params["_grid_keys"] = list(combo.keys())
+        hyper_params["_cache_dir"] = cfg.cache_dir
+        hyper_params["_override"]  = cfg.override
+        
+        tasks.append((
+            G_all, df_aligned, hyper_params,
+            cfg.label_col, cfg.group_col, cfg.n_splits, cfg.random_state
+        ))
 
     total = len(tasks)
-    logging.info(f"[ROI supervision] Grid size: {len(grid)} node-param combos × {len(cfg.aggregation_choices)} aggregations = {total} runs")
+    logging.info(f"[ROI supervision] Grid size: {len(grid)}  runs")
 
-    best_score, best_node_params, best_meta, best_clf_list = -1.0, None, None, None
+    best_score, best_hyper_params, best_meta, best_clf_list = -1.0, None, None, None
 
     if cfg.n_jobs is None or int(cfg.n_jobs) <= 1:
         # Serial path (original behavior)
@@ -398,16 +394,15 @@ def supervised_search(
                 logging.warning(f"[skip] combo #{i} failed: {payload['error']}")
                 continue
             score = payload["score"]
-            node_params = payload["node_params"]
-            aggr_method = payload["aggr_method"]
+            hyper_params = payload["hyper_params"]
             diag = payload["diag"]
             clf_list = payload["clf_list"]
 
-            logging.info(f"[{i}/{total}] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} -> {score:.4f} | params={_grid_params_only(node_params)}")
+            logging.info(f"[{i}/{total}] {hyper_params['structure_method']}+{hyper_params['attr_method']}+{hyper_params['fusion_mode']}+{hyper_params['aggr_method']} -> {score:.4f} | params={_grid_params_only(hyper_params)}")
             if score > best_score:
                 best_score = score
-                best_node_params = dict(node_params)
-                best_meta = {"aggr_method": aggr_method, **diag}
+                best_hyper_params = dict(hyper_params)
+                best_meta = diag
                 best_clf_list = clf_list
                 if "per_class_mean" in diag and "per_class_std" in diag:
                     cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
@@ -415,7 +410,7 @@ def supervised_search(
                         f"{c}:{diag['per_class_mean'][c]:.3f}±{diag['per_class_std'][c]:.3f}"
                         for c in cls_order
                     )
-                    logging.info(f"[best-so-far] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} | by-class acc: {cls_str}")
+                    logging.info(f"[best-so-far] {hyper_params['structure_method']}+{hyper_params['attr_method']}+{hyper_params['fusion_mode']}+{hyper_params['aggr_method']} | by-class acc: {cls_str}")
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
         # Parallel path
@@ -430,16 +425,15 @@ def supervised_search(
                     logging.warning(f"[skip] combo #{i} failed: {payload['error']}")
                     continue
                 score = payload["score"]
-                node_params = payload["node_params"]
-                aggr_method = payload["aggr_method"]
+                hyper_params = payload["hyper_params"]
                 diag = payload["diag"]
                 clf_list = payload["clf_list"]
 
-                logging.info(f"[{i}/{total}] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} -> {score:.4f} | params={_grid_params_only(node_params)}")
+                logging.info(f"[{i}/{total}] {hyper_params['structure_method']}+{hyper_params['attr_method']}+{hyper_params['fusion_mode']}+{hyper_params['aggr_method']} -> {score:.4f} | params={_grid_params_only(hyper_params)}")
                 if score > best_score:
                     best_score = score
-                    best_node_params = dict(node_params)
-                    best_meta = {"aggr_method": aggr_method, **diag}
+                    best_hyper_params = dict(hyper_params)
+                    best_meta = diag
                     best_clf_list = clf_list
                     if "per_class_mean" in diag and "per_class_std" in diag:
                         cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
@@ -447,8 +441,8 @@ def supervised_search(
                             f"{c}:{diag['per_class_mean'][c]:.3f}±{diag['per_class_std'][c]:.3f}"
                             for c in cls_order
                         )
-                        logging.info(f"[best-so-far] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} | by-class acc: {cls_str}")
+                        logging.info(f"[best-so-far] {hyper_params['structure_method']}+{hyper_params['attr_method']}+{hyper_params['fusion_mode']}+{hyper_params['aggr_method']} | by-class acc: {cls_str}")
 
-    if best_node_params is None:
+    if best_hyper_params is None:
         raise RuntimeError("All grid combinations failed; please check your config and data.")
-    return best_score, best_node_params, best_meta, best_clf_list
+    return best_score, best_hyper_params, best_meta, best_clf_list
