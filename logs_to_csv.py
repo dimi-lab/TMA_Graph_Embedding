@@ -8,21 +8,21 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
+#  2025-10-09 15:25:57,217 | INFO | [12/128] method=fastrp | attr=passthrough | fusion=concat | aggregation=set2set | score[roc_auc]=0.812345 | params={"dim":256,"weights":[1,2,4]}
 LINE_RE = re.compile(
     r"""
-    ^(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3})
-    \s+\|\s+INFO\s+\|\s+
-    \[(?P<i>\d+)\/(?P<n>\d+)\]\s+
-    (?P<method>[^\s]+)                # structure embedding method, e.g. fastrp
-    \s*\+\s*
-    (?P<aggregation>[^\s]+)           # aggregation method, e.g. set2set
-    \s*->\s*
-    (?P<score>-?\d+(\.\d+)?)
-    \s*\|\s*params=(?P<params>\{.*\})\s*$
+    ^(?:\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+\|\s+INFO\s+\|\s+)?  # optional ts + INFO +
+    \[\s*(?P<i>\d+)\s*/\s*(?P<n>\d+)\s*\]\s*
+    method=(?P<method>[^|]+?)\s*\|\s*
+    (?:attr=(?P<attr>[^|]+?)\s*\|\s*)?
+    (?:fusion=(?P<fusion>[^|]+?)\s*\|\s*)?
+    aggregation=(?P<aggregation>[^|]+?)\s*\|\s*
+    score\[(?P<score_type>[^\]]+)\]\s*=\s*(?P<score>-?\d+(?:\.\d+)?)\s*\|\s*
+    params=(?P<params>\{.*\})
+    \.?\s*$  # optional trailing period
     """,
     re.VERBOSE,
 )
-
 def parse_params(text: str) -> Dict[str, Any]:
     # tolerant dict parsing
     try:
@@ -64,20 +64,23 @@ def parse_line(line: str) -> Dict[str, Any] | None:
 
     weights_key = canonical_weights(params.get("weights"))
     dim = params.get("dim", None)
-    attr_mode = params.get("attr_mode", None)
+    attr_mode = params.get("attr_mode", g.get("attr"))
+    fusion_mode = params.get("fusion_mode", g.get("fusion"))
 
     return {
-        "timestamp": g["ts"],
-        "idx": int(g["i"]),
-        "n_total": int(g["n"]),
-        "method": g["method"],             # categorical
-        "aggregation": g["aggregation"],   # categorical
-        "score": float(g["score"]),
-        "l1_ratio": float(params.get("l1_ratio", 1.0)),     # numeric
-        "param.dim": pd.to_numeric(dim, errors="coerce"),  # numeric
-        "param.attr_mode": attr_mode,                      # categorical (may be None)
-        "param.weights_vec": weights_key,                  # categorical (unique vector token)
-        "raw.params": g["params"],                         # keep original text for traceability
+            "timestamp": 'none',
+            "idx": int(g["i"]),
+            "n_total": int(g["n"]),
+            "method": g["method"].strip(),
+            "aggregation": g["aggregation"].strip(),
+            "score": float(g["score"]),
+            "score_type": g["score_type"].strip(),
+            "l1_ratio": float(params.get("l1_ratio", 1.0)),
+            "param.dim": pd.to_numeric(dim, errors="coerce"),
+            "param.attr_mode": attr_mode,
+            "param.fusion_mode": fusion_mode,
+            "param.weights_vec": weights_key or 'none',
+            "raw.params": g["params"],
     }
 
 def rows_from_path(p: Path) -> List[Dict[str, Any]]:
@@ -119,8 +122,22 @@ def main():
         sys.exit(3)
 
     df = pd.DataFrame(all_rows)
+
+    # pivot to wide format and merge duplicates
+    index_cols = [c for c in df.columns if c not in ("score", "score_type")]
+    df_wide = (
+        df.pivot_table(
+            index=index_cols,          # "everything else the same"
+            columns="score_type",      # unique score types -> columns
+            values="score",            # fill with the numeric scores
+            aggfunc="first"            # or "mean"/"max" if you expect true duplicates
+        )
+        .reset_index()
+    )
+    df_wide.columns.name = None
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(args.out, index=False)
+    df_wide.to_csv(args.out, index=False)
     print(f"Wrote {len(df)} rows to {args.out.resolve()}")
 
 if __name__ == "__main__":

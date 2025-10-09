@@ -36,6 +36,7 @@ roi_supervision:
   group_col:          # optional; groups CV by subject/patient if available
   n_splits: 5
   random_state: 42
+  score_types: ["accuracy","average_acc","roc_auc"]
 
   # Fixed knobs (stay constant across trials)
   params_fixed:

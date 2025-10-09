@@ -138,6 +138,11 @@ class SupervisedSearchConfig:
     cache_dir: Optional[Path] = None
     override: bool = False
     n_jobs: int = 1 # parallel workers (processes). 1 = serial.
+    score_types: List[str] = None  # e.g., ["accuracy","average_acc","roc_auc"]
+    def get_score_types(self) -> List[str]:
+        if self.score_types is None or len(self.score_types) == 0:
+            return ["accuracy"]
+        return list(self.score_types)
 
 
 def _roi_labels_from_df(df_aligned: pd.DataFrame, label_col: str) -> pd.DataFrame:
@@ -176,6 +181,7 @@ def _evaluate_once(
     group_col: Optional[str],
     n_splits: int,
     random_state: int,
+    score_types: List[str],
 ) -> Tuple[float, Dict, List]:
     """
     Train/val CV on ROI embeddings produced by (node embedding -> aggregation).
@@ -254,7 +260,7 @@ def _evaluate_once(
 
 
     clf_list = [] # list of clf objects
-    scores = []
+    scores_by_type = {t: [] for t in score_types}
     per_class_fold_acc_int = {k: [] for k in range(n_classes)}
    
     for tr, va in split_iter:
@@ -272,8 +278,9 @@ def _evaluate_once(
         )
         clf.fit(E[tr], y[tr])
         proba = clf.predict_proba(E[va])
-        fold = _score_multiclass_robust(y[va], proba, n_classes)
-        scores.append(fold)
+        for t in score_types:
+            val = _score_multiclass_robust(y[va], proba, n_classes, type=t)
+            scores_by_type[t].append(val)
         # record detailed predictions by class
         y_pred = clf.predict(E[va])
         
@@ -292,13 +299,13 @@ def _evaluate_once(
     per_class_mean = {c: float(np.nanmean(per_class_fold_acc[c])) for c in classes_str}
     per_class_std  = {c: float(np.nanstd (per_class_fold_acc[c], ddof=1)) if len(per_class_fold_acc[c]) > 1 else 0.0
                       for c in classes_str}
-
-    return clf_list,float(np.mean(scores)), {
+    mean_scores = {t: float(np.nanmean(scores_by_type[t])) for t in score_types}
+    return clf_list,mean_scores, {
         "emb_dim": Z.shape[1],
         "roi_count": E.shape[0],
         "aggr_out_dim": E.shape[1],
         "classes": classes_str,
-        "fold_scores": [float(s) for s in scores],
+        "fold_scores_by_type": {t: [float(s) for s in scores_by_type[t]] for t in score_types},
         "per_class_fold_acc": per_class_fold_acc,  # dict[str] -> List[float]
         "per_class_mean": per_class_mean,          # dict[str] -> float
         "per_class_std": per_class_std,            # dict[str] -> float
@@ -313,7 +320,7 @@ def _run_one_combo(args) -> Tuple[bool, Dict]:
     """
     try:
         import os
-        (G_all, df_aligned, hyper_params,  label_col, group_col, n_splits, random_state) = args
+        (G_all, df_aligned, hyper_params,  label_col, group_col, n_splits, random_state, score_types) = args
 
         # make sure each worker is single-threaded (helps with MKL/BLAS oversubscription)
         os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -322,11 +329,11 @@ def _run_one_combo(args) -> Tuple[bool, Dict]:
         os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
         os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
-        clf_list, score, diag = _evaluate_once(
-            G_all, df_aligned, hyper_params, label_col, group_col, n_splits, random_state
+        clf_list, mean_scores, diag = _evaluate_once(
+            G_all, df_aligned, hyper_params, label_col, group_col, n_splits, random_state, score_types
         )
         return True, {
-            "score": score,
+            "mean_scores": mean_scores,
             "hyper_params": hyper_params,
             "diag": diag,
             "clf_list": clf_list,
@@ -378,13 +385,29 @@ def supervised_search(
         
         tasks.append((
             G_all, df_aligned, hyper_params,
-            cfg.label_col, cfg.group_col, cfg.n_splits, cfg.random_state
+            cfg.label_col, cfg.group_col, cfg.n_splits, cfg.random_state, cfg.score_types
         ))
 
     total = len(tasks)
     logging.info(f"[ROI supervision] Grid size: {len(grid)}  runs")
 
-    best_score, best_hyper_params, best_meta, best_clf_list = -1.0, None, None, None
+    # Track best per score type
+    best_by_type = {
+        t: {
+            "best_score": -np.inf,
+            "best_hyper_params": None,
+            "best_meta": None,
+            "best_clf_list": None,
+        } for t in cfg.score_types
+    }
+    def _log_scores(i_idx: int, hyper_params: Dict, scores_by_type: Dict[str, float]):
+        # [12/128] method=fastrp | attr=passthrough | fusion=concat | aggregation=set2set | score[roc_auc]=0.812345 | params={...}
+        import json
+        base = f"[{i_idx}/{total}] method={hyper_params['structure_method']} | attr={hyper_params.get('attr_method')} | fusion={hyper_params.get('fusion_mode')} | aggregation={hyper_params.get('aggr_method')}"
+        for t, s in scores_by_type.items():
+            line = f"{base} | score[{t}]={s:.6f} | params={json.dumps(_grid_params_only(hyper_params))}"
+            logging.info(line)
+
 
     if cfg.n_jobs is None or int(cfg.n_jobs) <= 1:
         # Serial path (original behavior)
@@ -393,24 +416,27 @@ def supervised_search(
             if not ok:
                 logging.warning(f"[skip] combo #{i} failed: {payload['error']}")
                 continue
-            score = payload["score"]
+            mean_scores = payload["mean_scores"]
             hyper_params = payload["hyper_params"]
             diag = payload["diag"]
             clf_list = payload["clf_list"]
 
-            logging.info(f"[{i}/{total}] {hyper_params['structure_method']}+{hyper_params['attr_method']}+{hyper_params['fusion_mode']}+{hyper_params['aggr_method']} -> {score:.4f} | params={_grid_params_only(hyper_params)}")
-            if score > best_score:
-                best_score = score
-                best_hyper_params = dict(hyper_params)
-                best_meta = diag
-                best_clf_list = clf_list
-                if "per_class_mean" in diag and "per_class_std" in diag:
-                    cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
-                    cls_str = ", ".join(
-                        f"{c}:{diag['per_class_mean'][c]:.3f}±{diag['per_class_std'][c]:.3f}"
-                        for c in cls_order
-                    )
-                    logging.info(f"[best-so-far] {hyper_params['structure_method']}+{hyper_params['attr_method']}+{hyper_params['fusion_mode']}+{hyper_params['aggr_method']} | by-class acc: {cls_str}")
+            _log_scores(i, hyper_params, mean_scores)
+            for t,s in mean_scores.items():
+                if s > best_by_type[t]["best_score"]:
+                    best_by_type[t]["best_score"] = s
+                    best_by_type[t]["best_hyper_params"] = dict(hyper_params)
+                    best_by_type[t]["best_meta"] = diag
+                    best_by_type[t]["best_clf_list"] = clf_list
+                    if "per_class_mean" in diag and "per_class_std" in diag:
+                        cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
+                        cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
+                        cls_str = ", ".join(
+                            f"{c}:{diag['per_class_mean'][c]:.3f}±{diag['per_class_std'][c]:.3f}"
+                            for c in cls_order
+                        )
+                        logging.info(f"[best-so-far:{t}]  | by-class acc: {cls_str}")
+    
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
         # Parallel path
@@ -424,25 +450,26 @@ def supervised_search(
                 if not ok:
                     logging.warning(f"[skip] combo #{i} failed: {payload['error']}")
                     continue
-                score = payload["score"]
+                mean_scores = payload["mean_scores"]
                 hyper_params = payload["hyper_params"]
                 diag = payload["diag"]
                 clf_list = payload["clf_list"]
 
-                logging.info(f"[{i}/{total}] {hyper_params['structure_method']}+{hyper_params['attr_method']}+{hyper_params['fusion_mode']}+{hyper_params['aggr_method']} -> {score:.4f} | params={_grid_params_only(hyper_params)}")
-                if score > best_score:
-                    best_score = score
-                    best_hyper_params = dict(hyper_params)
-                    best_meta = diag
-                    best_clf_list = clf_list
-                    if "per_class_mean" in diag and "per_class_std" in diag:
-                        cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
-                        cls_str = ", ".join(
-                            f"{c}:{diag['per_class_mean'][c]:.3f}±{diag['per_class_std'][c]:.3f}"
-                            for c in cls_order
-                        )
-                        logging.info(f"[best-so-far] {hyper_params['structure_method']}+{hyper_params['attr_method']}+{hyper_params['fusion_mode']}+{hyper_params['aggr_method']} | by-class acc: {cls_str}")
-
-    if best_hyper_params is None:
+                _log_scores(i, hyper_params, mean_scores)
+                for t,s in mean_scores.items():
+                    if s > best_by_type[t]["best_score"]:
+                        best_by_type[t]["best_score"] = s
+                        best_by_type[t]["best_hyper_params"] = dict(hyper_params)
+                        best_by_type[t]["best_meta"] = diag
+                        best_by_type[t]["best_clf_list"] = clf_list
+                        if "per_class_mean" in diag and "per_class_std" in diag:
+                            cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
+                            cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
+                            cls_str = ", ".join(
+                                f"{c}:{diag['per_class_mean'][c]:.3f}±{diag['per_class_std'][c]:.3f}"
+                                for c in cls_order
+                            )
+                            logging.info(f"[best-so-far:{t}]  | by-class acc: {cls_str}")
+    if all(best_by_type[t]["best_hyper_params"] == None for t in cfg.score_types):
         raise RuntimeError("All grid combinations failed; please check your config and data.")
-    return best_score, best_hyper_params, best_meta, best_clf_list
+    return best_by_type

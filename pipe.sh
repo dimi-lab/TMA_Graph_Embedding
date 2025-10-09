@@ -15,3 +15,8 @@ python analyze_from_csv.py --outdir analysis/plots/fov216_fastrp_het analysis/fo
 
 python main.py --config config/OVTMA_fov297_fastrp_none.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp_none &
 python main.py --config config/OVTMA_fov297_fastrp_het_none.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp_het_none &
+
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/demo.csv /projects/wangc/m344313/OVTMA_project/output/demo/logs/run_20251009_152517.log
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/demo/accuracy /projects/wangc/m344313/OVTMA_project/analysis/demo.csv --score-col accuracy
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/demo/average_acc /projects/wangc/m344313/OVTMA_project/analysis/demo.csv --score-col average_acc
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/demo/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/demo.csv --score-col roc_auc

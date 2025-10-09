@@ -280,59 +280,65 @@ def main():
             cache_dir=run_cfg.outdir / "cache" / "node_embeddings",
             override=run_cfg.override,
             n_jobs=int(sup_cfg.get("n_jobs", 1)),
+            score_types=sup_cfg.get("score_types", ["accuracy"]),
         )
 
-        best_score, best_hyper_params, best_meta, best_clf_list = supervised_search(G_all, df_aligned, ss_cfg)
-        logging.info(f"[ROI supervision] best_score={best_score:.6f}")
-        logging.info(f"[ROI supervision] best_hyper_params={best_hyper_params}")
-        logging.info(f"[ROI supervision] best_meta={best_meta}")
+        best_by_type = supervised_search(G_all, df_aligned, ss_cfg)
+        for t, v in best_by_type.items():
+            best_score = v["best_score"]
+            best_hyper_params = v["best_hyper_params"]
+            best_meta = v["best_meta"]
+            best_clf_list = v["best_clf_list"]
+            logging.info(f"[ROI supervision] score_metric: {t}")
+            logging.info(f"[ROI supervision] best_score={best_score:.6f}")
+            logging.info(f"[ROI supervision] best_hyper_params={best_hyper_params}")
+            logging.info(f"[ROI supervision] best_meta={best_meta}")
 
-        # Refit once on full data with best params and export ROI embeddings
-        Z_nodes = modules["node_embedding"](G_all, df_aligned, best_hyper_params)
+            # Refit once on full data with best params and export ROI embeddings
+            Z_nodes = modules["node_embedding"](G_all, df_aligned, best_hyper_params)
 
 
-        E_roi, group_ids = aggregate(Z_nodes, G=G_all, method=best_hyper_params["aggr_method"], return_group_ids=True)
+            E_roi, group_ids = aggregate(Z_nodes, G=G_all, method=best_hyper_params["aggr_method"], return_group_ids=True)
 
-        # Save outputs
-        roi_emb_dir = run_cfg.outdir / "evaluate" / "roi_supervised_best"
-        ensure_dir(roi_emb_dir)
-        savemat(str(roi_emb_dir / "roi_embedding.mat"), {"E": E_roi})
-        save_pickle(roi_emb_dir / "group_ids.pkl", group_ids)
-        save_pickle(roi_emb_dir / "best_clf_list.pkl", best_clf_list)
-        # sanitize params (drop internals and convert types)
-        best_hyper_params_yaml = {}
-        for k, v in best_hyper_params.items():
-            if str(k).startswith("_"):                 # drops _cache_dir, _override, _grid_keys
-                continue
-            if k in {"edge_index_dict", "num_nodes_dict", "metapaths", "X_attr"}:
-                continue
-            if isinstance(v, (sp.csr_matrix,np.ndarray)):
-                continue
-            if isinstance(v, Path):
-                v = str(v)
-            elif isinstance(v, (np.floating, np.integer)):
-                v = v.item()
-            best_hyper_params_yaml[str(k)] = v
+            # Save outputs
+            roi_emb_dir = run_cfg.outdir / "evaluate" / "roi_supervised_best" / t
+            ensure_dir(roi_emb_dir)
+            savemat(str(roi_emb_dir / "roi_embedding.mat"), {"E": E_roi})
+            save_pickle(roi_emb_dir / "group_ids.pkl", group_ids)
+            save_pickle(roi_emb_dir / "best_clf_list.pkl", best_clf_list)
+            # sanitize params (drop internals and convert types)
+            best_hyper_params_yaml = {}
+            for k, v in best_hyper_params.items():
+                if str(k).startswith("_"):                 # drops _cache_dir, _override, _grid_keys
+                    continue
+                if k in {"edge_index_dict", "num_nodes_dict", "metapaths", "X_attr"}:
+                    continue
+                if isinstance(v, (sp.csr_matrix,np.ndarray)):
+                    continue
+                if isinstance(v, Path):
+                    v = str(v)
+                elif isinstance(v, (np.floating, np.integer)):
+                    v = v.item()
+                best_hyper_params_yaml[str(k)] = v
 
-        diagnostics_yaml = {}
-        for k, v in best_meta.items():
-            if k == "aggr_method":    # you already store it separately
-                continue
-            if isinstance(v, (np.floating, np.integer)):
-                v = v.item()
-            diagnostics_yaml[str(k)] = v
+            diagnostics_yaml = {}
+            for k, v in best_meta.items():
+                if isinstance(v, (np.floating, np.integer)):
+                    v = v.item()
+                diagnostics_yaml[str(k)] = v
 
-        save_yaml(roi_emb_dir / "best_roi_supervision.yaml", {
-            "best_score": float(best_score),
-            "structure_method": best_hyper_params["structure_method"],
-            "attr_method": best_hyper_params["attr_method"],
-            "fusion_mode": best_hyper_params["fusion_mode"],
-            "aggr_method": best_hyper_params["aggr_method"],
-            "best_hyper_params": best_hyper_params_yaml,
-            "diagnostics": diagnostics_yaml,
-        })
+            save_yaml(roi_emb_dir / "best_roi_supervision.yaml", {
+                "score_metric": t,
+                "best_score": float(best_score),
+                "structure_method": best_hyper_params["structure_method"],
+                "attr_method": best_hyper_params["attr_method"],
+                "fusion_mode": best_hyper_params["fusion_mode"],
+                "aggr_method": best_hyper_params["aggr_method"],
+                "best_hyper_params": best_hyper_params_yaml,
+                "diagnostics": diagnostics_yaml,
+            })
 
-        logging.info(f"Saved ROI embeddings and best config to {roi_emb_dir}")
+            logging.info(f"Saved ROI embeddings and best config to {roi_emb_dir}")
 
     logging.info("Done.")
 
