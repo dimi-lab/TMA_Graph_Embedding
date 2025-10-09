@@ -12,3 +12,6 @@ python analyze_from_csv.py --outdir analysis/plots/fov297_fastrp_het analysis/fo
 python analyze_from_csv.py --outdir analysis/plots/fov297_fastrp analysis/fov297_fastrp.csv
 python analyze_from_csv.py --outdir analysis/plots/fov216_fastrp analysis/fov216_fastrp.csv
 python analyze_from_csv.py --outdir analysis/plots/fov216_fastrp_het analysis/fov216_fastrp_het.csv
+
+python main.py --config config/OVTMA_fov297_fastrp_none.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp_none &
+python main.py --config config/OVTMA_fov297_fastrp_het_none.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp_het_none &

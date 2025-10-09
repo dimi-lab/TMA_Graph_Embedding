@@ -138,6 +138,8 @@ class SupervisedSearchConfig:
     random_state: int = 42
     cache_dir: Optional[Path] = None
     override: bool = False
+    n_jobs: int = 1 # parallel workers (processes). 1 = serial.
+
 
 def _roi_labels_from_df(df_aligned: pd.DataFrame, label_col: str) -> pd.DataFrame:
     """
@@ -155,17 +157,14 @@ def _score_multiclass_robust(y_true, proba, n_classes,type="accuracy") -> float:
         y_pred = np.argmax(proba, axis=1)
         return float(accuracy_score(y_true, y_pred))
     if type == "average_acc":
-        # fallback: BA with argmax predictions
         y_pred = np.argmax(proba, axis=1)
         return float(balanced_accuracy_score(y_true, y_pred))
     elif type == "roc_auc":
+        if len(np.unique(y_true)) < 2:
+            raise ValueError("single-class fold")
         if n_classes == 2:
-            if len(np.unique(y_true)) < 2:
-                raise ValueError("single-class fold")
             return float(roc_auc_score(y_true, proba[:, 1]))
         else:
-            if len(np.unique(y_true)) < 2:
-                raise ValueError("single-class fold")
             return float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
     else:
         raise ValueError(f"Invalid type: {type}")
@@ -266,7 +265,7 @@ def _evaluate_once(
                 max_iter=2000,
                 class_weight="balanced",
                 solver="saga",
-                n_jobs=None,
+                n_jobs=1, # avoid nested parallelization
                 random_state=random_state,
                 penalty="elasticnet",
                 l1_ratio=float(node_params.get("l1_ratio", 1.0)),
@@ -307,7 +306,35 @@ def _evaluate_once(
         "n_splits_effective": int(n_splits_eff),
         "clf_l1_ratio": float(node_params.get("l1_ratio", 1.0)),
      }
+# ---- picklable worker for parallel map ----
+def _run_one_combo(args) -> Tuple[bool, Dict]:
+    """
+    Returns (ok, payload). If ok=True, payload has: score, node_params, aggr_method, diag, clf_list
+    If ok=False, payload has: 'error'
+    """
+    try:
+        import os
+        (G_all, df_aligned, node_params, aggr_method, label_col, group_col, n_splits, random_state) = args
 
+        # make sure each worker is single-threaded (helps with MKL/BLAS oversubscription)
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+        os.environ.setdefault("MKL_NUM_THREADS", "1")
+        os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+        os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+        clf_list, score, diag = _evaluate_once(
+            G_all, df_aligned, node_params, aggr_method, label_col, group_col, n_splits, random_state
+        )
+        return True, {
+            "score": score,
+            "node_params": node_params,
+            "aggr_method": aggr_method,
+            "diag": diag,
+            "clf_list": clf_list,
+        }
+    except Exception as e:
+        return False, {"error": str(e)}
 def _iter_param_grid(space: Dict) -> List[Dict]:
     """
     Expand a discrete parameter grid into all combinations.
@@ -341,48 +368,79 @@ def supervised_search(
     df_aligned: pd.DataFrame,
     cfg: SupervisedSearchConfig,
 ) -> Tuple[float, Dict, Dict, List]:
-    """
-    Exhaustive grid search over (node2vec/metapath2vec params) × (aggregation choices).
-    Returns (best_score, best_node_params, best_meta) where best_meta includes aggr_method & diagnostics.
-    """
     if not cfg.aggregation_choices:
         raise ValueError("aggregation_choices must be a non-empty list.")
 
     grid = _iter_param_grid(cfg.params_search_space or {})
-    total = len(grid) * len(cfg.aggregation_choices)
-    logging.info(f"[ROI supervision] Grid size: {len(grid)} node-param combos × {len(cfg.aggregation_choices)} aggregations = {total} runs")
-
-    best_score, best_node_params, best_meta = -1.0, None, None
-
-    for gi, combo in enumerate(grid, start=1):
+    tasks = []
+    for combo in grid:
         node_params = dict(cfg.params_fixed or {})
         node_params.update(combo)
         node_params["_grid_keys"] = list(combo.keys())
-
         node_params["_cache_dir"] = cfg.cache_dir
         node_params["_override"]  = cfg.override
+        for aggr_method in cfg.aggregation_choices:
+            tasks.append((
+                G_all, df_aligned, node_params, aggr_method,
+                cfg.label_col, cfg.group_col, cfg.n_splits, cfg.random_state
+            ))
 
-        for ai, aggr_method in enumerate(cfg.aggregation_choices, start=1):
-            try:
-                clf_list, score, diag = _evaluate_once(
-                    G_all=G_all,
-                    df_aligned=df_aligned,
-                    node_params=node_params,
-                    aggr_method=aggr_method,
-                    label_col=cfg.label_col,
-                    group_col=cfg.group_col,
-                    n_splits=cfg.n_splits,
-                    random_state=cfg.random_state,
-                )
-                logging.info(
-                    f"[{(gi-1)*len(cfg.aggregation_choices)+ai}/{total}] "
-                    f"{node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} -> {score:.4f} | params={combo}"
-                )
+    total = len(tasks)
+    logging.info(f"[ROI supervision] Grid size: {len(grid)} node-param combos × {len(cfg.aggregation_choices)} aggregations = {total} runs")
+
+    best_score, best_node_params, best_meta, best_clf_list = -1.0, None, None, None
+
+    if cfg.n_jobs is None or int(cfg.n_jobs) <= 1:
+        # Serial path (original behavior)
+        for i, args in enumerate(tasks, start=1):
+            ok, payload = _run_one_combo(args)
+            if not ok:
+                logging.warning(f"[skip] combo #{i} failed: {payload['error']}")
+                continue
+            score = payload["score"]
+            node_params = payload["node_params"]
+            aggr_method = payload["aggr_method"]
+            diag = payload["diag"]
+            clf_list = payload["clf_list"]
+
+            logging.info(f"[{i}/{total}] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} -> {score:.4f} | params={_grid_params_only(node_params)}")
+            if score > best_score:
+                best_score = score
+                best_node_params = dict(node_params)
+                best_meta = {"aggr_method": aggr_method, **diag}
+                best_clf_list = clf_list
+                if "per_class_mean" in diag and "per_class_std" in diag:
+                    cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
+                    cls_str = ", ".join(
+                        f"{c}:{diag['per_class_mean'][c]:.3f}±{diag['per_class_std'][c]:.3f}"
+                        for c in cls_order
+                    )
+                    logging.info(f"[best-so-far] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} | by-class acc: {cls_str}")
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        # Parallel path
+        n_workers = int(cfg.n_jobs)
+        logging.info(f"[parallel] Launching {n_workers} workers")
+        with ProcessPoolExecutor(max_workers=n_workers) as ex:
+            futures = {ex.submit(_run_one_combo, args): idx for idx, args in enumerate(tasks, start=1)}
+            for fut in as_completed(futures):
+                i = futures[fut]
+                ok, payload = fut.result()
+                if not ok:
+                    logging.warning(f"[skip] combo #{i} failed: {payload['error']}")
+                    continue
+                score = payload["score"]
+                node_params = payload["node_params"]
+                aggr_method = payload["aggr_method"]
+                diag = payload["diag"]
+                clf_list = payload["clf_list"]
+
+                logging.info(f"[{i}/{total}] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} -> {score:.4f} | params={_grid_params_only(node_params)}")
                 if score > best_score:
                     best_score = score
                     best_node_params = dict(node_params)
                     best_meta = {"aggr_method": aggr_method, **diag}
-                    # Log a compact class-wise summary when a new best appears
+                    best_clf_list = clf_list
                     if "per_class_mean" in diag and "per_class_std" in diag:
                         cls_order = list(diag.get("classes", diag["per_class_mean"].keys()))
                         cls_str = ", ".join(
@@ -390,11 +448,6 @@ def supervised_search(
                             for c in cls_order
                         )
                         logging.info(f"[best-so-far] {node_params['structure_method']}+{node_params['attr_method']}+{node_params['fusion_mode']}+{aggr_method} | by-class acc: {cls_str}")
-                    best_clf_list = clf_list
-
-            except Exception as e:
-                logging.warning(f"[skip] combo #{gi}, aggr '{aggr_method}' failed: {e}")
-                continue
 
     if best_node_params is None:
         raise RuntimeError("All grid combinations failed; please check your config and data.")
