@@ -21,7 +21,7 @@ def summarize_impacts(
     df: pd.DataFrame,
     score_col: str = "score",
     numeric_cols: list[str] = ["param.dim"],
-    categorical_cols: list[str] = ["method","aggregation","param.attr_mode","param.weights_vec"],
+    categorical_cols: list[str] = ["method","aggregation","param.attr_mode","param.weights_vec","param.fusion_mode"],
 ) -> pd.DataFrame:
     out_rows = []
     global_mean = df[score_col].mean()
@@ -143,7 +143,7 @@ def main():
     ap.add_argument("--score-col", default="score")
     # choose which columns are treated as numeric / categorical
     ap.add_argument("--numeric", nargs="*", default=["param.dim"])
-    ap.add_argument("--categorical", nargs="*", default=["method","aggregation","param.attr_mode","param.weights_vec"])
+    ap.add_argument("--categorical", nargs="*", default=["method","aggregation","param.attr_mode","param.weights_vec","param.fusion_mode"])
     ap.add_argument("--topn-cats", type=int, default=20, help="Top-N categories to show in bar plots")
     args = ap.parse_args()
 
@@ -183,6 +183,7 @@ def main():
         bar_means_by_category(df, "l1_ratio", args.score_col, args.outdir / "bar_l1_ratio.png", top_n=args.topn_cats)
 
     # 2) categorical boxplots + bar(means)
+
     for cat_col in args.categorical:
         if cat_col in df.columns and df[cat_col].notna().any():
 

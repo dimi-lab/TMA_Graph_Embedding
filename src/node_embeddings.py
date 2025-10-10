@@ -35,8 +35,17 @@ def fuse_embedding(structure_emb,attr_emb=None,fusion_mode: str = "none") -> np.
         assert attr_emb is not None, "attr_emb must be provided if fusion_mode is concat"
         assert attr_emb.shape[0] == structure_emb.shape[0], "attr_emb and structure_emb must have the same number of rows"
         return np.hstack([attr_emb, structure_emb])
-
-    raise NotImplementedError(f"Fusion mode not implemented: {fusion_mode}")
+    elif fusion_mode == "concat_power":
+        assert attr_emb is not None, "attr_emb must be provided if fusion_mode is concat_shuffle"
+        assert attr_emb.shape[0] == structure_emb.shape[0], "attr_emb and structure_emb must have the same number of rows"
+        raise NotImplementedError("concat_power is not implemented")
+    elif fusion_mode == "concat_shuffle":
+        assert attr_emb is not None, "attr_emb must be provided if fusion_mode is concat_shuffle"
+        assert attr_emb.shape[0] == structure_emb.shape[0], "attr_emb and structure_emb must have the same number of rows"
+        structure_emb = np.random.permutation(structure_emb)
+        return np.hstack([attr_emb, structure_emb])
+    else:
+        raise NotImplementedError(f"Fusion mode not implemented: {fusion_mode}")
 
 def attribute_embedding(df: pd.DataFrame, attr_method: str = "passthrough", cols: Optional[list]=None, **kwargs) -> np.ndarray:
     attr_method = (attr_method or "passthrough").lower()
