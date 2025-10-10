@@ -169,6 +169,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--override", action="store_true", default=False,
                     help="Recompute node embeddings even if cached files exist.")
+    parser.add_argument("--n-jobs", type=int, default=10, help="Number of jobs.")
     args = parser.parse_args()
 
     run_cfg = RunConfig(
@@ -279,7 +280,7 @@ def main():
             random_state=int(sup_cfg.get("random_state", 42)),
             cache_dir=run_cfg.outdir / "cache" / "node_embeddings",
             override=run_cfg.override,
-            n_jobs=int(sup_cfg.get("n_jobs", 1)),
+            n_jobs=int(sup_cfg.get("n_jobs", 1)) if args.n_jobs is None else args.n_jobs,
             score_types=sup_cfg.get("score_types", ["accuracy"]),
         )
 

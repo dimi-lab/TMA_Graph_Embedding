@@ -32,7 +32,7 @@ def _grid_params_only(hyper_params: Dict) -> Dict:
     if not keys:
         # fallback: all non-internal keys
         keys = [k for k in hyper_params.keys() if not k.startswith("_")]
-    blacklist = ["l1_ratio"]
+    blacklist = []
     def _keep(k: str) -> bool:
         return (k in hyper_params) and (k not in blacklist) and (not k.startswith("clf__"))
     return {k: hyper_params[k] for k in keys if _keep(k)}
@@ -160,7 +160,7 @@ def _score_multiclass_robust(y_true, proba, n_classes,type="accuracy") -> float:
     if type == "accuracy":
         y_pred = np.argmax(proba, axis=1)
         return float(accuracy_score(y_true, y_pred))
-    if type == "average_acc":
+    if type == "average_acc": # average recall
         y_pred = np.argmax(proba, axis=1)
         return float(balanced_accuracy_score(y_true, y_pred))
     elif type == "roc_auc":
