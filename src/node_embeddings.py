@@ -17,36 +17,92 @@ def node_embedding(G_all: nx.Graph, df_aligned: pd.DataFrame, node_params: Dict)
     X_attr = attribute_embedding(df_aligned, attr_method=attr_method, cols=attr_cols)
 
     structure_method = str(node_params.get("structure_method", "random")).lower()
-    if node_params['structure_method'] == 'fastrp-het':
-        assert fusion_mode == 'none', "fusion_mode must be none if structure_method is fastrp-het"
-        node_params['X_attr'] = sp.csr_matrix(X_attr)
     Z = structure_embedding(G_all, method=structure_method, **(node_params or {}))
     Z = np.asarray(Z, dtype=np.float64)
     # concat feature-wise
     
-    return fuse_embedding(Z, X_attr, fusion_mode)
+    A, conf = prepare_fastrp(G_all, node_params)
+    q = conf['q']
+    return fuse_embedding(Z, X_attr, fusion_mode, A,q)
 
 
-def fuse_embedding(structure_emb,attr_emb=None,fusion_mode: str = "none") -> np.ndarray:
+def fuse_embedding(
+    structure_emb: np.ndarray,
+    attr_emb: Optional[np.ndarray] = None,
+    fusion_mode: str = "none",
+    A = None,
+    q: Optional[int] = None,
+    *,
+    rng: Optional[np.random.Generator] = None
+) -> np.ndarray:
+    """
+    Fuse structure and attribute embeddings.
+
+    Modes:
+      - "none": return structure_emb
+      - "concat": [attr_emb | structure_emb]
+      - "concat_shuffle": [row-shuffled(attr_emb) | structure_emb]
+      - "concat_power": [[A@attr, A^2@attr, ..., A^q@attr] | structure_emb]
+      - "concat_power_shuffle": same as concat_power but attr is row-shuffled first
+
+    Args:
+      structure_emb: (N, d_s)
+      attr_emb: (N, d_a)
+      A: (N, N) csr/csc/dense matrix
+      q: positive int, number of powers
+      rng: optional np.random.Generator for deterministic shuffling
+
+    Returns:
+      Fused embedding as a dense ndarray with shape (N, d_*)
+    """
     fusion_mode = (fusion_mode or "none").lower()
+
     if fusion_mode == "none":
-        return structure_emb
-    elif fusion_mode == "concat":
-        assert attr_emb is not None, "attr_emb must be provided if fusion_mode is concat"
-        assert attr_emb.shape[0] == structure_emb.shape[0], "attr_emb and structure_emb must have the same number of rows"
-        return np.hstack([attr_emb, structure_emb])
-    elif fusion_mode == "concat_power":
-        assert attr_emb is not None, "attr_emb must be provided if fusion_mode is concat_shuffle"
-        assert attr_emb.shape[0] == structure_emb.shape[0], "attr_emb and structure_emb must have the same number of rows"
-        raise NotImplementedError("concat_power is not implemented")
+        return np.asarray(structure_emb)
+
+    # All other modes require attr_emb with matching rows
+    if attr_emb is None:
+        raise AssertionError("attr_emb must be provided if fusion_mode is not 'none'")
+    if attr_emb.shape[0] != structure_emb.shape[0]:
+        raise AssertionError("attr_emb and structure_emb must have the same number of rows")
+
+    N = structure_emb.shape[0]
+
+    if fusion_mode == "concat":
+        return np.hstack([np.asarray(attr_emb), np.asarray(structure_emb)])
+
     elif fusion_mode == "concat_shuffle":
-        assert attr_emb is not None, "attr_emb must be provided if fusion_mode is concat_shuffle"
-        assert attr_emb.shape[0] == structure_emb.shape[0], "attr_emb and structure_emb must have the same number of rows"
-        structure_emb = np.random.permutation(structure_emb)
-        return np.hstack([attr_emb, structure_emb])
+        # Row-wise permutation (baseline control)
+        if rng is None:
+            perm = np.random.permutation(N)
+        else:
+            perm = rng.permutation(N)
+        attr_shuf = np.asarray(attr_emb)[perm]
+        return np.hstack([attr_shuf, np.asarray(structure_emb)])
+
+    elif fusion_mode == "concat_power":
+        if A is None or q is None:
+            raise AssertionError("A and q must be provided for 'concat_power'")
+        if (sp.issparse(A) and A.shape != (N, N)) or (isinstance(A, np.ndarray) and A.shape != (N, N)):
+            raise AssertionError("A must be square and match the number of rows in embeddings")
+        propagated = _propagate_and_concat(A, np.asarray(attr_emb), int(q))
+        return np.hstack([propagated, np.asarray(structure_emb)])
+
+    elif fusion_mode == "concat_power_shuffle":
+        if A is None or q is None:
+            raise AssertionError("A and q must be provided for 'concat_power_shuffle'")
+        if (sp.issparse(A) and A.shape != (N, N)) or (isinstance(A, np.ndarray) and A.shape != (N, N)):
+            raise AssertionError("A must be square and match the number of rows in embeddings")
+        if rng is None:
+            perm = np.random.permutation(N)
+        else:
+            perm = rng.permutation(N)
+        attr_shuf = np.asarray(attr_emb)[perm]
+        propagated = _propagate_and_concat(A, attr_shuf, int(q))
+        return np.hstack([propagated, np.asarray(structure_emb)])
+
     else:
         raise NotImplementedError(f"Fusion mode not implemented: {fusion_mode}")
-
 def attribute_embedding(df: pd.DataFrame, attr_method: str = "passthrough", cols: Optional[list]=None, **kwargs) -> np.ndarray:
     attr_method = (attr_method or "passthrough").lower()
     if attr_method == "passthrough":
@@ -355,10 +411,8 @@ def structure_embedding(
     else:
         raise NotImplementedError(f"Unsupported method: {method}")
 
-
-# -- fastrp helpers --
-
-def prepare_fastrp(G,params):
+# adjacency matrix helper
+def get_adjacency_matrix(G):
     nodelist = G.nodes()
     try:
         A_nx = nx.to_scipy_sparse_array(G, nodelist=nodelist, weight=None, format="csr")
@@ -366,6 +420,14 @@ def prepare_fastrp(G,params):
         # For older NetworkX
         A_nx = nx.to_scipy_sparse_matrix(G, nodelist=nodelist, weight=None, format="csr")
     A = csr_matrix(A_nx)  # ensure scipy.sparse.csr_matrix
+    return A
+
+
+
+# -- fastrp helpers --
+
+def prepare_fastrp(G,params):
+    A = get_adjacency_matrix(G)
 
     conf = {
         'projection_method': params.get("projection_method", "gaussian"),
@@ -375,17 +437,41 @@ def prepare_fastrp(G,params):
         'dim': params.get("dim", 512),
         'alpha': params.get("alpha", None), # Tukey hyper-parameter
         'C': params.get("C", 1.0), # Not sure what this is?
-        'X_attr': params.get('X_attr', None),
     }
-    
+    if conf['weights'] is None:
+        assert params.get("q") is not None, "q must be provided if weights is None"
+        conf['q'] = params.get("q")
+    else:
+        conf['q'] = len(conf['weights'])
     return A, conf
 
-def get_emb_filename(prefix, conf):
-    return prefix + '-dim=' + str(conf['dim']) + ',projection_method=' + conf['projection_method'] \
-        + ',input_matrix=' + conf['input_matrix'] + ',normalization=' + str(conf['normalization']) \
-        + ',weights=' + (','.join(map(str, conf['weights'])) if conf['weights'] is not None else 'None') \
-        + ',alpha=' + (str(conf['alpha']) if 'alpha' in conf else '') \
-        + ',C=' + (str(conf['C']) if 'alpha' in conf else '1.0') \
-        + '.mat'
+# def get_emb_filename(prefix, conf):
+#     return prefix + '-dim=' + str(conf['dim']) + ',projection_method=' + conf['projection_method'] \
+#         + ',input_matrix=' + conf['input_matrix'] + ',normalization=' + str(conf['normalization']) \
+#         + ',weights=' + (','.join(map(str, conf['weights'])) if conf['weights'] is not None else 'None') \
+#         + ',alpha=' + (str(conf['alpha']) if 'alpha' in conf else '') \
+#         + ',q=' + (str(conf['q']) if 'q' in conf else '3') \
+#         + ',C=' + (str(conf['C']) if 'alpha' in conf else '1.0') \
+#         + '.mat'
 
 
+def _propagate_and_concat(A, X: np.ndarray, q: int) -> np.ndarray:
+    """
+    Build [A@X, A^2@X, ..., A^q@X] by iterative multiplication.
+    A may be scipy.sparse or a dense numpy array. Returns a dense ndarray.
+    """
+    if q < 1 or int(q) != q:
+        raise ValueError(f"q must be a positive integer; got {q}")
+    # Ensure A is suitable for fast row multiplies
+    if sp.issparse(A):
+        if not sp.isspmatrix_csr(A) and not sp.isspmatrix_csc(A):
+            A = A.tocsr()
+    elif not isinstance(A, np.ndarray):
+        raise TypeError("A must be a scipy.sparse matrix or a numpy.ndarray")
+    # Iterative power: Z_i = A @ Z_{i-1}, starting from Z_0 = X
+    Z = X
+    outs = []
+    for _ in range(int(q)):
+        Z = A @ Z
+        outs.append(np.asarray(Z))
+    return np.hstack(outs) if len(outs) > 1 else outs[0]

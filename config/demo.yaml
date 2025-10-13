@@ -46,16 +46,11 @@ roi_supervision:
     normalization: False
     projection_method: sparse # gaussian/sparse , sparse in the paper
     input_matrix: trans # adj/trans, trans in the paper
-
+    weights:
   # Search space (randomly sampled)
   params_search_space:
     l1_ratio: [0.0, 0.5, 1.0]
-    fusion_mode: ["none", "concat"] 
-    dim: [64]
-    weights:
-    # --- baselines  ---
-    - 
-    # - [1,1,1,1,1,1,1,1,1,1]
-    # - [1,2,4,8,16,16,8,4,2,1]
-    # - [1,2,4,8,16,32,64,128,256,512]
+    fusion_mode: ["none", "concat","concat_shuffle","concat_power","concat_power_shuffle"] 
+    dim: [32,64,128,256,512]
+    q: [1,2,3, 4, 5, 6]
     aggr_method: ['mean_pool', 'add_pool', 'max_pool']

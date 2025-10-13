@@ -12,7 +12,7 @@ import scipy.sparse as sp
 # projection method: choose from Gaussian and Sparse
 # input matrix: use raw adj matrix or transition matrix ( as in the paper)
 # alpha: beta in the paper, tukey parameter
-def fastrp_projection(A, q=3, dim=128, projection_method='gaussian', input_matrix='trans', alpha=None,X_attr=None):
+def fastrp_projection(A, q=3, dim=128, projection_method='gaussian', input_matrix='trans', alpha=None):
     assert input_matrix == 'adj' or input_matrix == 'trans'
     assert projection_method == 'gaussian' or projection_method == 'sparse'
     
@@ -35,12 +35,6 @@ def fastrp_projection(A, q=3, dim=128, projection_method='gaussian', input_matri
                         np.squeeze(np.power(csc_matrix.sum(A, axis=1), alpha)), 0, N, N)
     cur_U = transformer.transform(M)
 
-    if X_attr is not None:
-        assert X_attr.shape[0] == M.shape[0], "Node feature shape must match adjacency matrix shape"
-        # concat node_feature to the right of cur_U
-        if not sp.issparse(X_attr):
-            X_attr = sp.csr_matrix(X_attr)
-        cur_U = sp.hstack([cur_U, X_attr],format='csr')
     U_list = [cur_U]
 
     
@@ -71,12 +65,11 @@ def fastrp_merge(U_list, weights, normalization=False):
 # the choice between adj matrix and trans matrix is decided in the conf
 def fastrp_wrapper(A, conf):
     U_list = fastrp_projection(A,
-                               q=len(conf['weights']) if conf['weights'] is not None else 3,
+                               q= conf['q'],
                                dim=conf['dim'],
                                projection_method=conf['projection_method'],
                                input_matrix=conf['input_matrix'],
                                alpha=conf['alpha'],
-                               X_attr=conf['X_attr'],
     )
     U = fastrp_merge(U_list, conf['weights'], conf['normalization'])
     return U
@@ -86,5 +79,6 @@ def get_emb_filename(prefix, conf):
         + ',input_matrix=' + conf['input_matrix'] + ',normalization=' + str(conf['normalization']) \
         + ',weights=' + (','.join(map(str, conf['weights'])) if conf['weights'] is not None else 'None') \
         + ',alpha=' + (str(conf['alpha']) if 'alpha' in conf else '') \
+        + ',q=' + (str(conf['q']) if 'q' in conf else '3') \
         + ',C=' + (str(conf['C']) if 'alpha' in conf else '1.0') \
         + '.mat'
