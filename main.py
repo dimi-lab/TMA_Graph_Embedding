@@ -216,6 +216,8 @@ def main():
             subject_labels = None
         df = modules["attach_labels"](cells, roi_labels, subject_labels)
 
+        if paths['ready']
+
         # Save df
         ensure_dir(run_cfg.outdir / "dataframes")
         df.to_csv(run_cfg.outdir / "dataframes" / "df.csv", index=False)

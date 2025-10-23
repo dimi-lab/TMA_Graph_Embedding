@@ -45,3 +45,11 @@ python main.py --config config/OVTMA_fov297_fastrp_none_shuffle.yaml --outdir /p
 python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/fov297_fastrp_none_shuffle.csv /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp_none_shuffle/logs/run_20251010_095931.log
 python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/fov297_fastrp_none_Include_shuffle/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/fov297_fastrp_none.csv /projects/wangc/m344313/OVTMA_project/analysis/fov297_fastrp_none_shuffle.csv --score-col roc_auc
 python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/fov297_fastrp_none_Include_shuffle/accuracy /projects/wangc/m344313/OVTMA_project/analysis/fov297_fastrp_none.csv /projects/wangc/m344313/OVTMA_project/analysis/fov297_fastrp_none_shuffle.csv --score-col accuracy
+
+python main.py --config config/OVTMA_fov297_power.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov297_power --n-jobs 10 &
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/fov297_power.csv /projects/wangc/m344313/OVTMA_project/output/fov297_power/logs/run_20251013_163736.log
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/fov297_power/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/fov297_power.csv --score-col roc_auc
+
+python main.py --config config/OVTMA_fov216_power.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/fov216_power --n-jobs 10 &
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/fov216_power.csv /projects/wangc/m344313/OVTMA_project/output/fov216_power/logs/run_20251013_163749.log
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/fov216_power/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/fov216_power.csv --score-col roc_auc

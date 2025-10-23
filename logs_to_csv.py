@@ -80,6 +80,7 @@ def parse_line(line: str) -> Dict[str, Any] | None:
             "param.attr_mode": attr_mode,
             "param.fusion_mode": fusion_mode,
             "param.weights_vec": weights_key or 'none',
+            "param.q": params.get("q",1),
             "raw.params": g["params"],
     }
 

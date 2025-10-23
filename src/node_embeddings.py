@@ -39,7 +39,8 @@ def fuse_embedding(
     Fuse structure and attribute embeddings.
 
     Modes:
-      - "none": return structure_emb
+      - "attr": return attr_emb
+      - "structure": return structure_emb
       - "concat": [attr_emb | structure_emb]
       - "concat_shuffle": [row-shuffled(attr_emb) | structure_emb]
       - "concat_power": [[A@attr, A^2@attr, ..., A^q@attr] | structure_emb]
@@ -55,11 +56,12 @@ def fuse_embedding(
     Returns:
       Fused embedding as a dense ndarray with shape (N, d_*)
     """
-    fusion_mode = (fusion_mode or "none").lower()
+    fusion_mode = (fusion_mode or "concat").lower()
 
-    if fusion_mode == "none":
+    if fusion_mode == "structure":
         return np.asarray(structure_emb)
-
+    elif fusion_mode == "attr":
+        return np.asarray(attr_emb)
     # All other modes require attr_emb with matching rows
     if attr_emb is None:
         raise AssertionError("attr_emb must be provided if fusion_mode is not 'none'")
