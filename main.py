@@ -70,7 +70,7 @@ def add_to_syspath(path: Path):
 
 def import_project_modules():
     from src.data_io import (
-        read_cells_rds, read_roi_labels_csv, read_subject_labels_csv, attach_labels
+        read_cells_rds, read_roi_labels_csv, read_subject_labels_csv, attach_labels, validate_df
     )
     from src.graph_builder import build_graph
     from src.node_embeddings import node_embedding
@@ -85,6 +85,7 @@ def import_project_modules():
         "build_graph": build_graph,
         "node_embedding": node_embedding,
         "basic_graph_metrics": basic_graph_metrics,
+        "validate_df": validate_df,
     }
 
 
@@ -195,29 +196,36 @@ def main():
 
 
     # === Load data ===
-    if os.path.exists(run_cfg.outdir / "data" / "df.csv") and not run_cfg.override:
+    if os.path.exists(run_cfg.outdir / "dataframes" / "df.csv") and not run_cfg.override:
         logging.info("Loading cached data...")
-        df = pd.read_csv(run_cfg.outdir / "data" / "df.csv")
+        df = pd.read_csv(run_cfg.outdir / "dataframes" / "df.csv")
         logging.info(f"Loaded df.csv with shape {df.shape}")
+        if not modules["validate_df"](df):
+            raise ValueError("df is not valid, please check the config file")
     else:   
         logging.info("Loading data...")
         paths = cfg["paths"]
-        cols_cell = cfg["cell_columns"]
-        cols_roi = cfg["roi_label_columns"]
-        cols_subj = cfg.get("subject_label_columns", None)
-
         BASE = Path(paths["data_dir"])
-        cells = modules["read_cells_rds"](BASE / paths["cell_rds"], cols_cell)
-        roi_labels = modules["read_roi_labels_csv"](BASE / paths["roi_labels_csv"], cols_roi)
-        if paths["subject_labels_csv"] is not None:
-            assert cols_subj is not None, "subject_labels_csv is provided but subject_label_columns is not provided"
-            subject_labels = modules["read_subject_labels_csv"](BASE / paths["subject_labels_csv"], cols_subj)
+        if paths["ready_df"] is not None:
+            df = pd.read_csv(BASE / paths["ready_df"])
+            df = df.rename(columns={v: k for k, v in cfg["cell_columns"].items()})
+            logging.info(f"Loaded ready_df with shape {df.shape}")
         else:
-            subject_labels = None
-        df = modules["attach_labels"](cells, roi_labels, subject_labels)
+            cols_cell = cfg["cell_columns"]
+            cols_roi = cfg["roi_label_columns"]
+            cols_subj = cfg.get("subject_label_columns", None)
 
-        if paths['ready']
-
+            
+            cells = modules["read_cells_rds"](BASE / paths["cell_rds"], cols_cell)
+            roi_labels = modules["read_roi_labels_csv"](BASE / paths["roi_labels_csv"], cols_roi)
+            if paths["subject_labels_csv"] is not None:
+                assert cols_subj is not None, "subject_labels_csv is provided but subject_label_columns is not provided"
+                subject_labels = modules["read_subject_labels_csv"](BASE / paths["subject_labels_csv"], cols_subj)
+            else:
+                subject_labels = None
+            df = modules["attach_labels"](cells, roi_labels, subject_labels)
+        if not modules["validate_df"](df):
+            raise ValueError("df is not valid, please check the config file")
         # Save df
         ensure_dir(run_cfg.outdir / "dataframes")
         df.to_csv(run_cfg.outdir / "dataframes" / "df.csv", index=False)
@@ -237,7 +245,7 @@ def main():
         logging.info("Building per-ROI graphs...")
         gcfg = cfg["graph"]
         graph_dict = {}
-        for roi, df_roi in df.groupby("ROI"):
+        for roi, df_roi in df.groupby("roi_id"):
             G = modules["build_graph"](
                 df_roi,
                 kind=gcfg["type"],

@@ -20,3 +20,9 @@ jupyter lab notebooks/00_wireup_demo.ipynb
 
 ## Config
 Edit `config/config.yaml` to point to your files and name your columns.
+
+## Input
+csv with cellID, imageID, patientID, phenotype, x, y
+
+## Output
+Embeddings, classifier result

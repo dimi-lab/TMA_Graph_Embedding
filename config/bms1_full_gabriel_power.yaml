@@ -1,0 +1,51 @@
+# Paths
+paths:
+  data_dir: /projects/wangc/m344313/OVTMA_project/data/bms1
+  ready_df: full_df.csv
+# Column names in the cell .rds
+cell_columns:
+  x: x
+  y: y
+  phenotype: cell_type
+  cell_id: cell_id
+  roi_id: imageID
+  patient_id: patientID
+  roi_label: responder
+
+
+# Graph options (choose at runtime too)
+graph:
+  type: gabriel        # one of: knn, radius, gabriel
+  knn_k: 8
+  radius: 25.0
+
+
+auxiliary_loss:
+  method: none
+  params: {}
+
+roi_supervision:
+  enabled: true
+  n_jobs: 5
+  
+  group_col:          # optional; groups CV by subject/patient if available
+  n_splits: 5
+  random_state: 42
+  score_types: ["accuracy","average_acc","roc_auc"]
+
+  # Fixed knobs (stay constant across trials)
+  params_fixed:
+    structure_method: fastrp
+    attr_method: passthrough
+    attr_cols: #additional columns to concatenate(ex. functional markers)
+    normalization: False
+    projection_method: sparse # gaussian/sparse , sparse in the paper
+    input_matrix: trans # adj/trans, trans in the paper
+    weights:
+  # Search space (randomly sampled)
+  params_search_space:
+    l1_ratio: [0.0,0.25, 0.5, 0.75, 1.0]
+    fusion_mode: ["attr", "structure", "concat","concat_shuffle","concat_power","concat_power_shuffle"] 
+    dim: [32,64,128,256,512]
+    q: [1,2,3, 4, 5, 6]
+    aggr_method: ['mean_pool', 'add_pool', 'max_pool']

@@ -148,10 +148,10 @@ class SupervisedSearchConfig:
 def _roi_labels_from_df(df_aligned: pd.DataFrame, label_col: str) -> pd.DataFrame:
     """
     Returns a 2-column DF: ROI, label
-    Assumes df_aligned has columns ['ROI', label_col] and each ROI has exactly one label.
+    Assumes df_aligned has columns ['roi_id', label_col] and each ROI has exactly one label.
     """
-    lab = df_aligned[['ROI', label_col]].drop_duplicates()
-    if lab['ROI'].duplicated().any():
+    lab = df_aligned[['roi_id', label_col]].drop_duplicates()
+    if lab['roi_id'].duplicated().any():
         raise ValueError(f"Label column '{label_col}' is not constant within ROI.")
     return lab
 
@@ -207,11 +207,11 @@ def _evaluate_once(
     lab_df = _roi_labels_from_df(df_aligned, label_col)
     # group_ids contain ROI identifiers; when G_all nodes are (ROI, local_id), group_ids are those ROI keys.
     # Convert to str for safe merge keys if needed:
-    key_series = pd.Series(group_ids, name="ROI")
-    roi_df = pd.DataFrame({"ROI": key_series})
-    lab_df_merged = roi_df.merge(lab_df, on="ROI", how="left")
+    key_series = pd.Series(group_ids, name="roi_id")
+    roi_df = pd.DataFrame({"roi_id": key_series})
+    lab_df_merged = roi_df.merge(lab_df, on="roi_id", how="left")
     if lab_df_merged[label_col].isna().any():
-        missing = roi_df[lab_df_merged[label_col].isna()].ROI.tolist()
+        missing = roi_df[lab_df_merged[label_col].isna()]['roi_id'].tolist()
         raise ValueError(f"Missing ROI labels for: {missing[:10]} (and possibly more).")
 
     y_raw = lab_df_merged[label_col].values
@@ -221,8 +221,8 @@ def _evaluate_once(
 
     # Optional grouping at ROI level (e.g., Subject)
     if group_col is not None and group_col in df_aligned.columns:
-        grp_map = df_aligned[['ROI', group_col]].drop_duplicates()
-        grp_vec = roi_df.merge(grp_map, on="ROI", how="left")[group_col].values
+        grp_map = df_aligned[['roi_id', group_col]].drop_duplicates()
+        grp_vec = roi_df.merge(grp_map, on="roi_id", how="left")[group_col].values
         use_groups = True
     else:
         grp_vec = None

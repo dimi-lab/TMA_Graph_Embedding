@@ -12,7 +12,7 @@ def dict_to_ns(d: dict) -> Namespace:
 
 import pandas as pd
 def align_df_with_G_all(df, G_all):
-    roi_col = "ROI"
+    roi_col = "roi_id"
     id_col  = "cell_id"  
     # 1) Build the target index from the graph's nodes (keeps the graph's order)
     node_index = pd.MultiIndex.from_tuples(list(G_all.nodes()),
@@ -22,7 +22,7 @@ def align_df_with_G_all(df, G_all):
     df_idxed = df.set_index([roi_col, id_col])
     if df_idxed.index.has_duplicates:
         raise ValueError("Duplicates found in df")
-        # pick the first occurrence per (ROI, cell_id); or use a different reducer
+        # pick the first occurrence per (roi_id, cell_id); or use a different reducer
         #  = df_idxed[~df_idxed.index.duplicated(keep="first")]
 
     # 3) Reindex to align order exactly to G_all.nodes()
