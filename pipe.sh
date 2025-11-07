@@ -1,3 +1,8 @@
+# install torch and torch_geometric
+pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu126
+pip install torch_geometric
+
+
 python logs_to_csv.py --out analysis/fov297_fastrp_het.csv /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp_het/logs/run_20251007_170631.log
 
 python logs_to_csv.py --out analysis/fov297_fastrp.csv /projects/wangc/m344313/OVTMA_project/output/fov297_fastrp/logs/run_20251007_170557.log
@@ -61,3 +66,13 @@ python main.py --config config/bms1_interface_gabriel_power.yaml --outdir /proje
 python main.py --config config/bms1_interface_radius_25_power.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/bms1_interface_radius_25_power --n-jobs 1 &
 python main.py --config config/bms1_full_gabriel_power.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/bms1_full_gabriel_power --n-jobs 1 &
 python main.py --config config/bms1_full_radius_25_power.yaml --outdir /projects/wangc/m344313/OVTMA_project/output/bms1_full_radius_25_power --n-jobs 1 &
+
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_interface_gabriel_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_interface_gabriel_power/logs/run_20251106_163507.log
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_interface_radius_25_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_interface_radius_25_power/logs/run_20251106_163737.log
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_full_gabriel_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_full_gabriel_power/logs/run_20251106_100000.log
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_full_radius_25_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_full_radius_25_power/logs/run_20251106_100000.log
+
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/bms1_interface_gabriel_power/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/bms1_interface_gabriel_power.csv --score-col roc_auc
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/bms1_interface_radius_25_power/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/bms1_interface_radius_25_power.csv --score-col roc_auc
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/bms1_full_gabriel_power/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/bms1_full_gabriel_power.csv --score-col roc_auc
+python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/bms1_full_radius_25_power/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/bms1_full_radius_25_power.csv --score-col roc_auc
