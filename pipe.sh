@@ -69,8 +69,8 @@ python main.py --config config/bms1_full_radius_25_power.yaml --outdir /projects
 
 python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_interface_gabriel_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_interface_gabriel_power/logs/run_20251106_163507.log
 python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_interface_radius_25_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_interface_radius_25_power/logs/run_20251106_163737.log
-python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_full_gabriel_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_full_gabriel_power/logs/run_20251106_100000.log
-python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_full_radius_25_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_full_radius_25_power/logs/run_20251106_100000.log
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_full_gabriel_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_full_radius_25_power/logs/run_20251106_163739.log
+python logs_to_csv.py --out /projects/wangc/m344313/OVTMA_project/analysis/bms1_full_radius_25_power.csv /projects/wangc/m344313/OVTMA_project/output/bms1_full_gabriel_power/logs/run_20251106_163737.log
 
 python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/bms1_interface_gabriel_power/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/bms1_interface_gabriel_power.csv --score-col roc_auc
 python analyze_from_csv.py --outdir /projects/wangc/m344313/OVTMA_project/analysis/plots/bms1_interface_radius_25_power/roc_auc /projects/wangc/m344313/OVTMA_project/analysis/bms1_interface_radius_25_power.csv --score-col roc_auc
