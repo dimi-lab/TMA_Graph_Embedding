@@ -21,6 +21,10 @@ Switch to ROI-native width/height:
 
 Continuous mode example:
   --cont-col moran_I --vmin -1 --vmax 1 --alpha-fill 200 
+
+Requires input format:
+    Mel44_BMS/MOVES.xml
+    Mel44_BMS/S001_VHE_region_001.tif
 """
 
 import os, math, glob, argparse
