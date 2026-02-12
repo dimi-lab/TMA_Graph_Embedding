@@ -1,0 +1,21 @@
+# Minimal config for: get_fastrp_embeddings.py
+# No supervision block.
+
+cell_columns:
+  roi_id: roi_id
+  x: x
+  y: y
+
+graph:
+  type: radius       # must match what your src.graph_builder.build_graph expects
+  radius: 25.0
+  knn_k: 8           # ignored by radius graph, but safe to keep
+
+fastrp:
+  q: 3
+  dim: 64
+  projection_method: gaussian   # gaussian | sparse
+  input_matrix: trans           # trans | adj
+  alpha: -0.5
+  normalization: true
+  weights: [1, 1, 1]            # length should equal q
